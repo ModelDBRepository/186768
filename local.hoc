@@ -1,0 +1,53 @@
+//  $Header: /usr/site/nrniv/simctrl/hoc/RCS/local.hoc,v 1.15 2003/02/13 15:32:06 billl Exp $
+//
+//  This file contains local modifications to nrnoc.hoc and default.hoc
+//
+//  Users should not edit nrnoc.hoc or default.hoc.  Any local 
+//  changes to these files should be made in this file.
+
+// ------------------------------------------------------------
+//* MODIFICATIONS TO NRNOC.HOC
+// The procedures declared here will overwrite any duplicate
+// procedures in nrnoc.hoc.
+// ------------------------------------------------------------
+
+//*MODIFICATIONS TO DEFAULT.HOC
+//
+// Vars added here may not be handled properly within nrnoc.hoc
+//------------------------------------------------------------
+
+//** String defaults
+
+//** Simulation defaults
+
+long_dt     = .001      // msec 
+
+objref sfunc,tmpfile
+sfunc = hoc_sf_   // needed to use is_name()
+tmpfile = new File()  // check for existence before opening a user's local.hoc file
+
+proc write_comment () {
+  tmpfile.aopen("index")
+  tmpfile.printf("%s\n",$s1)
+  tmpfile.close()  
+}
+
+func asin () { return atan($1/sqrt(1-$1*$1)) }
+func acos () { return atan(sqrt(1-$1*$1)/$1) }
+
+objref mt[2]
+mt = new MechanismType(0)
+proc uninsert_all () { local ii
+  forall for ii=0,mt.count()-1 {
+    mt.select(ii)
+    mt.selected(temp_string_)
+    if (strcmp(temp_string_,"morphology")==0) continue
+    if (strcmp(temp_string_,"capacitance")==0) continue
+    if (strcmp(temp_string_,"extracellular")==0) continue
+    if (sfunc.substr(temp_string_,"_ion")!=-1) continue
+    mt.remove()
+    // print ii,temp_string_
+  }
+}
+
+condor_run = 0  // define for compatability

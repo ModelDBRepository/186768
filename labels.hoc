@@ -1,0 +1,111 @@
+// $Id: labels.hoc,v 1.95 2011/01/14 16:46:02 billl Exp $
+
+load_file("declist.hoc")
+// keep track of version number for future changes
+// eg if (label_hoc_vers>88) rcsopen("labels.hoc",88) // go back to 88
+labels_hoc_vers=find_num("$Id: labels.hoc,v 1.95 2011/01/14 16:46:02 billl Exp $","1\\."," ")
+objref NCv,CODEv,DELv
+objref PRIDv,POIDv,PRv,POv,DISTv,WT0v,WT1v // mo(1) will assign these
+declare("ce",nil,"CTYP",new List(),"CPLA",new List(),"TPA",new List(),"nm",new List())
+declare("STYP",new List(),"ncells",0,"ZTYP",new List(),"INCOL",new List())
+declare("DEND",0,"SOMA",1,"AXON",2) // compartment codes - only 3 for now
+
+//* utility functions
+// plmin(val,var)
+func plmin() { return $1 + $2*(2*u_rand() - 1) } 
+
+//* cell types: 
+// iex(), returns numeric index associated with a string or string object
+func iex () { 
+  if (argtype(1)==2) sprint(tstr,"x=%s",$s1) else sprint(tstr,"x=%s",$o1.s)
+  execute(tstr) return x 
+}
+// ice(), returns whether cell is an inhib cell based on its name starting with I
+func ice () { local x
+  if (argtype(1)==2) return strm($s1,"^I")
+  if (argtype(1)==0) x=$1 else if (argtype(1)==1) x=$o1.type 
+  return strm(CTYP.o(x).s,"^I")
+}
+//* GetLyr - return layer of type
+func GetLyr () { local x localobj st
+  st=new String()
+  if (argtype(1)==2) st.s=$s1 else if (argtype(1)==0) st.s=CTYP.o($1).s else {
+    st.s=CTYP.o($o1.type).s }
+  sscanf(st.s,"%*1s%d",&x)
+  return x
+}
+
+proc printtype () { local i
+  for (i=1;argtype(i)==0;i+=1) if ($i!=-1) printf("%s(%d) ",CTYP.o($i).s,$i)
+  if (argtype(i)==2) printf("%s",$si) else print ""
+}
+proc celltype () { localobj st
+  st=new String("\n")
+  if (argtype(2)==2) st.s=$s2
+  if (argtype(1)==0) printtype(ce.o($1).type,st.s) else printtype($o1.type,st.s) 
+}
+
+obfunc names2indices () { local x localobj lo,xo,st
+  lo=new List() st=new String()
+  split($s1,lo)
+  for ltr(xo,lo,&x) { sprint(st.s,"%s=%d",xo.s,x) execute(st.s) }
+  return lo
+}
+
+// at some point may want to divide up this list into cell type -- eg RS,IB and location
+CTYP=names2indices("NU,SM,DP,SU,IN,TC,IRE,ITH,E6,I6,I6C,I6L,E5B,E5R,I5,I5L,E4,I4,I4L,E2,E2B,I2,I2Q,I2C,I2L,RS,IB,LTS,FS,ECA1,ICA1,ICA1L,EDG,IDG,IDGL,ECA3,ICA3,ICA3L,E3,I3,I3L")
+CTYPi=CTYP.count  // number of cell types
+
+// 1 cmp nrn, 2 cmp nrn, multi cmp nrn, intfire1, INTF, invlfire, nstim
+for scase2(XO,"1-CMP","CMP1","2-CMP","CMP2","MULTI-CMP","MC","IntFire1","IF1","INTF","IF",\
+          "INVLF","IFV","NStim","STM") { CPLA.append(XO)
+  sprint(tstr,"%s=%d",XO.t,i1) execute(tstr) }
+CPLAi=CPLA.count // count of cell templates
+
+for scase2(XO,"REAL","RL","ARTC","AC","SOMA","SO","DEND","DN") {TPA.append(XO)}
+TPAi=TPA.count
+
+proc ae () { localobj xo
+  STYP.remove_all
+  for scase2(xo,"AMPA","AM","NMDA","NM","GABAA","GA","GABAB","GB",\
+             "AMPA2","AM2","NMDA2","NM2","GABAA2","GA2","GABAB2","GB2",\
+           "IClamp","IC","AMPA/NMDA","EX","GABAA/GABAB2","IX","Exp2Syn","E2Sy"){
+    STYP.append(new String2(xo.t,xo.s)) // switch them around here
+    sprint(tstr,"%s=%d",xo.t,i1)
+    execute(tstr)
+  }
+  STYPi=STYP.count  // number of cell types
+}
+ae()
+
+for scase(XO,"DG","CA3","CA1","SUB","PSUB","MEC","LEC") {
+  sprint(tstr,"%s=%d",XO.s,i1) execute(tstr) ZTYP.append(new String(XO.s))
+}
+
+for scase2(XO,"RIGHT","RIT","INCOL","INC","LEFT","LFT") { INCOL.append(new String(XO.s))
+  sprint(tstr,"%s=%d",XO.t,i1) execute(tstr) }
+INCOLi=INCOL.count
+
+//* IsLTS - return if type is LTS
+func IsLTS () {
+  return $1 == I2L || $1 == I4L || $1 == I5L || $1 == I6L 
+}
+//* IsBurst - return if type is intrinsically bursting
+func IsBurst () {
+  return $1 == E2B || $1 == E5B
+}
+//* IsFRB - return true if type is fast regular bursting
+func IsFRB () {
+  return $1 == E2B
+}
+//* IsRS - return true if type is regular spiking E cell
+func IsRS () {
+  return $1 == E2 || $1 == E4 || $1 == E5R || $1 == E6
+}
+//* IsFS - return true if type is fast spiking interneuron
+func IsFS () {
+  return $1 == I2 || $1 == I4 || $1 == I5 || $1 == I6 || $1 == ICA3 || $1 == IDG || $1 == ICA1
+}
+
+func isartcell () { return sfunc.is_point_process($o1) }
+

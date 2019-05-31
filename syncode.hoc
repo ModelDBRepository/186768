@@ -1,0 +1,1605 @@
+// $Id: syncode.hoc,v 1.411 2010/07/12 15:32:09 samn Exp $
+
+//* setup
+load_file("grvec.hoc")
+load_file("labels.hoc")
+load_file("nqs.hoc")
+strdef syn1,syn2
+thresh = -20
+objref cp,svs,ncq,intf,vq
+objref ivspks,vspks,wvspks,ncl[1][1][1]
+objref sp[3], c[1], ce, nc[1], cells[10] // enough room for 10 cell types
+objref vite
+double numc[CTYPi],ix[CTYPi],ixe[CTYPi],wmat[CTYPi][CTYPi][STYPi],wd0[CTYPi][CTYPi][STYPi]
+Incol=2
+ncl = new List()
+sp = new NQS()
+
+//* iterator ixt(),ctt(),stt()
+// ctt() iterates over all cells; eg for ctt() print ii
+iterator ctt () { local jj // global ii
+  if (argtype(2)==3) $&2=0 else i1=0
+  for jj=0,CTYPi-1 if (numc[jj]!=0) { 
+    if (ce!=nil) if (ix[jj]<ce.count()) { 
+      if (argtype(1)==1) $o1=ce.o(ix[jj]) else XO=ce.o(ix[jj]) 
+    }
+    if (argtype(1)==3) $&1=jj else ii=jj
+    iterator_statement
+    if (argtype(2)==3) $&2+=1 else i1+=1
+  }
+}
+
+//* iterator cttr() -- reverse iterator of ctt
+iterator cttr () { local jj // global ii
+  if (argtype(2)==3) $&2=0 else i1=0
+  for(jj=CTYPi-1;jj>=0;jj-=1) if (numc[jj]!=0) { 
+    if (ce!=nil) if (ix[jj]<ce.count()) { 
+      if (argtype(1)==1) $o1=ce.o(ix[jj]) else XO=ce.o(ix[jj]) 
+    }
+    if (argtype(1)==3) $&1=jj else ii=jj
+    iterator_statement
+    if (argtype(2)==3) $&2+=1 else i1+=1
+  }
+}
+
+// stt() iterates over all synapse types
+iterator stt () { local ia,ja,ka,ib,jb,im,jm // global ii,jj,kk
+  i1=ib=jb=0 im=jm=CTYPi-1 
+  if (argtype(1)==0) if ($1>=0) ib=im=$1
+  if (argtype(2)==0) if ($2>=0) jb=jm=$2
+  if (argtype(4)==3) $&4=0
+  for ia=ib,im for ja=jb,jm if (numc[ia]!=0 && numc[ja]!=0) {
+    if (ce!=nil) if (ix[ia]<ce.count()) {XO=ce.o(ix[ia]) YO=ce.o(ix[ja])}
+    for ka=0,STYPi-1 if (wmat[ia][ja][ka]!=0) {
+      if (argtype(3)==3) { $&1=ia $&2=ja $&3=ka } else { ii=ia jj=ja kk=ka }
+      iterator_statement
+      if (argtype(4)==3) $&4+=1 else i1+=1
+    }
+  }
+}
+
+ixi=ixj=0 // ixi steps through cell#s and ixj is consecutive
+for ii=0,CTYPi-1 ixe[ii]=-1
+// ctype(#,TYPE)
+func ctype () { local ii
+  if (numarg()==2) {
+    return ($1>=ix[$2] && $1<=ixe[$2]) 
+  } else {
+    for ii=0,CTYPi-1 if ($1>=ix[ii] && $1<=ixe[ii]) return ii 
+    return -1
+  }
+}
+// ixt(type[,col,vec]); ixt(type,&x); ixt(type,col,&x)
+iterator ixt () { local ty,col,a,lfl,ixa,i localobj o
+  ty=$1 lfl=0
+  if (argtype(2)==0) col=$2 else { col=-1 if (argtype(2)==3) lfl=2 }
+  if (argtype(3)==1) { o=$o3 vrsz(numc[ty],o,"O") } else if (argtype(3)==3) lfl=3
+  i=lfl
+  if (col<0) {
+    for ({ixa=ix[ty] ixj=0};ixa<=ixe[ty];{ixa+=1 ixj+=1}) { XO=ce.o(ixa)
+      if (lfl) $&i=ixa else ixi=ixa
+      iterator_statement
+    }
+  } else {
+    if (col>=ncols) printf("ixt ERR: Only %d columns (%d)\n",ncols,col) else {
+      a=ix[ty]+col*numc[ty]/ncols
+      for ({ixa=a ixj=0};ixa<a+numc[ty]/ncols;{ixa+=1 ixj+=1}) { XO=ce.o(ixa)
+        if (XO.col!=col) printf("ixt ERR: XO.col!=col, %d %d\n",XO.col,col)
+        if (lfl) $&i=ixa else ixi=ixa
+        iterator_statement
+      }
+    }
+  }
+  if (o!=nil) stat(o)
+}
+
+// for ltr(XO,cvode.netconlist("", "", "")) print XO.precell,XO.postcell,XO.syn
+//* synapse linking -- old routines not using NQS
+//** geolink(s1,s2,s3) s1 for presyns and s2 for postsyns, connect s3's
+// only checks for INTF as a possible pre/post point process
+// connects a layer to another assuming 1 dim netgeom
+proc geolink() { local i,ii,a,sav,nowrap,noself
+  if (numarg()==0) { print "\tgeolink(s1,s2,s3,DEFCON)"
+    print "  make connections from s1 to s2 connecting onto s3 type PPs."
+    print "  DEFCON struct defines connection"
+    return
+  }
+  // default to yes wrap; yes within-column connect unless $s1==$s2
+  nowrap = !$o4.wrap  noself=!$o4.self
+  if (strcmp($s1,$s2)==0) $o4.self=0
+  tmpobj=new List($s1)
+  // object containing a receive/event PP need fflag=1 and intf as name of PP
+  if (tmpobj.object(0).fflag) { // presynaptic object flag
+    sprint(temp_string_,"ncl.append(new NetCon(XO.intf, YO.%s))",$s3)
+  } else {
+    sprint(temp_string_,"XO.soma ncl.append(new NetCon(&v(.5), YO.%s))",$s3)
+  }
+  for ltr (XO,tmpobj,&y) { // presyn list
+    $o4.grot(y)
+    for lvtr (YO,&x,new List($s2),$o4.scr) { // postsyn list and vector
+      if (x==1) { // connect
+        print "connecting ",XO," to ",YO
+        execute(temp_string_)
+      }
+    }
+  }
+  XO=nil YO=nil
+}
+
+//** glink() same as geolink but takes lists statt strings
+proc glink() { local i,ii,a,sav,nowrap,noself
+  if (numarg()==0) { print "\tgeolink(l1,l2,DEFCON)"
+    print "  make connections from items in l1 to items in l2."
+    print "  DEFCON struct defines connection"
+    return
+  }
+  // default to yes wrap; yes within-column connect unless $s1==$s2
+  nowrap = !$o4.wrap  noself=!$o4.self
+  // object containing a receive/event PP need fflag=1 and intf as name of PP
+  if ($o1.object(0).fflag) { // presynaptic object flag
+    sprint(temp_string_,"ncl.append(new NetCon(XO.intf, YO.%s))",$s3)
+  } else {
+    sprint(temp_string_,"XO.soma ncl.append(new NetCon(&v(.5), YO.%s))",$s3)
+  }
+  for ltr (XO,$o1,&y) { // presyn list
+    $o4.grot(y)
+    for lvtr (YO,&x,$o2,$o4.scr) { // postsyn list and vector
+      if (x==1) { // connect
+        // print "connecting ",XO," to ",YO
+        execute(temp_string_)
+      }
+    }
+  }
+  XO=nil YO=nil
+}
+
+//** synlink(s1,s2,s3,[gmax,del]) s1 for presyns and s2 for postsyns, connect s3's
+//  eg synlink("PYR","INH","AMPA")
+// provides full connectivity
+proc synlink() { local gm,dl
+  if (numarg()==0) { print "\tsynlink(s1,s2,s3)"
+    print "  make connections from all of type s1 to one of type s2 "
+    print "     only connecting onto s3 type PPs."
+    print "  Matching done with regexps."
+    return
+  }
+  if (numarg()==5) { gm=$4 dl=$5 } else { gm=0 dl=1 }
+  tmplist = new List($s3) // list of postsyn point processes 
+  for ltr (XO,new List($s1)) { // presyn list
+    for ltr (YO,tmplist) {
+      if (pp_loc(YO,$s2,syn2)) { 
+        sfunc.head(syn2,"\\.",syn2)
+        sprint(syn1,"%s",XO)
+        if (strcmp(syn1,syn2)!=0) { // don't allow self connects
+          print "connecting ",XO," to ",syn2
+          XO.soma ncl.append(new NetCon(&v(.5), YO, thresh, gm, dl))
+        }
+      }
+    }
+  }
+}
+      
+// run NQS.mo(1) first to set up PRIDv ... vectors
+
+//** simple netconnect routines: netconn(), netgen()
+proc netconn () { local pre,post,syn,pri,poi
+  pre=$1 post=$2 
+  if (numarg()==5) { syn=$3 pri=$4 poi=$5 } else { syn=0 pri=$3 poi=$4 }
+  cells[pre].object(pri).conn(cells[post].object(poi).syns[syn])
+}
+
+proc netgen () { ncl.append(new NetCon($o1, $o2)) }
+
+//** syncopy() copies from one set of syns to another for colocalization
+proc syncopy () { 
+  if (numarg()==0) { printf("syncopy(to_type,[]): copy from type, post/type, pre/post/type\n") return }
+  sprint(temp_string_,"XO.precell.soma ncl.append(new NetCon(&v(.5),XO.postcell.%s",$s1)
+  if (numarg()==1) tmplist = cvode.netconlist("", "" , $s2)
+  if (numarg()==2) tmplist = cvode.netconlist("", $s2, $s3)
+  if (numarg()==3) tmplist = cvode.netconlist($s2, $s3, $s4)
+  for ltr(XO,tmplist) execute(temp_string_)
+}
+
+//** syn1to1(PRE,POST,SYN)
+proc syn1to1 () { local pre,post,syn
+  pre=$1 post=$2
+  if (numarg()==3) syn=$3 else syn=0
+  if (cells[pre].count !=cells[post].count) { 
+    printf("\tERROR: 1-to-1 connectivity requires same # of %s (=%d) and %s (=%d).\n",\
+           CTYP.object(pre).s,cells[pre].count,CTYP.object(post).s,cells[post].count) return }
+  for ltr2(XO,YO,cells[pre],cells[post]) {
+    printf("SRC: %s -> TRG: %s (%s)\n",XO,YO,YO.syns(syn))
+    XO.conn(YO.syns[syn])
+  }
+}
+
+//* synconn() synapse linking -- NQS routines
+//** synconn(preid,postid,pre#,post#,%div)
+// eg synconn(PYRi,PYRi,AMPAi,pmat[PYR][PYR])
+// provides % connectivity based on C/pre==%div==%conv==D/post
+// S==C*post==D*pre %conv=S/(post*pre)=C/pre=D/post
+objref convec,convec1,convec2  // vectors to count how much div is from each nrn
+convec = new Vector(1e3)
+convec1 = convec.c // a scratch vector
+convec2 = convec.c // copy of convec to blot out self-connect and redundent connects
+
+proc synconn () { local preid,posid,pdiv,con,div,ii,jj,prn,pon,targ,sz,styp1,styp2
+  if (numarg()==0) { print "\tsynconn(preid,postid,prn,pon,pdiv)" return }
+  preid=$1 posid=$2 prn=$3 pon=$4 pdiv=$5
+  CODEv=sp.v[sp.fi("CODE")] PRv=sp.v[sp.fi("PR")] POv=sp.v[sp.fi("PO")]
+  sz=PRv.size
+  if (pdiv==1) {
+    if (preid==posid) div=pon-1 else div=pon
+    con=div
+  } else {
+    con=int(pdiv*prn+1) div=int(pdiv*pon)
+  }
+  if (isobj(CTYP,"List")) {
+    printf("%s->%s:\tdiv=%d,conv=%d (%d syns)\n",CTYP.object(preid).s,CTYP.object(posid).s,div,con,prn*div)
+  } else {
+    printf("%d->%d:\tdiv=%d,conv=%d (%d syns)\n",preid,posid,div,con,prn*div)
+  }
+  if (prn*div==0) return
+  sp.pad(sz+prn*div)
+  if (pdiv==1) {
+    convec.indgen(0,pon-1,1)
+    for ii=0,prn-1 {
+      if (preid==posid) {convec.indgen(0,pon-1,1) convec.remove(ii)}
+      POv.copy(convec,sz+ii*div)
+      PRv.fill(ii,sz+ii*div,sz+(ii+1)*div-1)
+    }
+  } else {
+    convec.resize(pon) convec.fill(0) // counter for convergence
+    for ii=0,prn-1 { // sources
+      convec2.copy(convec) 
+      if (preid==posid) convec2.x[ii]=1e10 // block self-connect
+      for jj=1,div POv.set(sz+ii*div+jj-1,pickpost(pon,con)) // pick desired target
+      PRv.fill(ii,sz+ii*div,sz+(ii+1)*div-1)
+    }
+  }
+  CODEv.fill(mkcodf(preid,posid,0,0,0),sz,PRv.size-1)
+}
+
+proc syncnn () { local preb,pree,posb,pose,pdiv,con,div,ii,jj,prn,pon,targ,sz,styp1,styp2
+  if (numarg()==0) { print "\tsyncnn(preb,pree,posb,pose,pdiv)" return }
+  preb=$1 pree=$2 posb=$3 pose=$4  pdiv=$5
+  CODEv=sp.v[sp.fi("CODE")] PRv=sp.v[sp.fi("PR")] POv=sp.v[sp.fi("PO")]
+  sz=PRv.size
+  prn=pree-preb+1  pon=pose-posb+1
+  if (pdiv==1) {
+    if (preid==posid) div=pon-1 else div=pon
+    con=div
+  } else {
+    con=int(pdiv*prn+1) div=int(pdiv*pon)
+  }
+  if (isobj(CTYP,"List")) {
+    printf("%s->%s:\tdiv=%d,conv=%d (%d syns)\n",CTYP.object(preid).s,CTYP.object(posid).s,div,con,prn*div)
+  } else {
+    printf("%d->%d:\tdiv=%d,conv=%d (%d syns)\n",preid,posid,div,con,prn*div)
+  }
+  if (prn*div==0) return
+  sp.pad(sz+prn*div)
+  if (pdiv==1) {
+    convec.indgen(0,pon-1,1)
+    for ii=0,prn-1 {
+      if (preid==posid) {convec.indgen(0,pon-1,1) convec.remove(ii)}
+      POv.copy(convec,sz+ii*div)
+      PRv.fill(ii,sz+ii*div,sz+(ii+1)*div-1)
+    }
+  } else {
+    convec.resize(pon) convec.fill(0) // counter for convergence
+    for ii=0,prn-1 { // sources
+      convec2.copy(convec) 
+      if (preid==posid) convec2.x[ii]=1e10 // block self-connect
+      for jj=1,div POv.set(sz+ii*div+jj-1,pickpost(pon,con)) // pick desired target
+      PRv.fill(ii,sz+ii*div,sz+(ii+1)*div-1)
+    }
+  }
+  PRv.add(preb) POv.add(posb)
+  CODEv.fill(mkcodf(preid,posid,0,0,0),sz,PRv.size-1)
+}
+
+//** synconn2() uses elimrepeats() and shuffle methods
+proc synconn2 () { local preid,posid,pdiv,con,div,ii,jj,prn,pon
+  if (numarg()==0) { print "\tsynconn2(preid,postid,prn,pon,pdiv)" return }
+  preid=$2 posid=$3 prn=$4 pon=$5 pdiv=$6
+  $o1.clear()
+  PRv=$o1.v[$o1.fi("PR")] POv=$o1.v[$o1.fi("PO")]
+  con=int(pdiv*prn+1) div=int(pdiv*pon)
+  if (prn*div==0) return
+  printf("%s->%s:\tdiv=%d,conv=%d (%d syns)\n",CTYP.object(preid).s,CTYP.object(posid).s,div,con,prn*div)
+  if (pdiv==1) {
+    $o1.pad(prn*div)
+    convec.indgen(0,pon-1,1)
+    for ii=0,prn-1 {
+      POv.copy(convec,ii*div)
+      PRv.fill(ii,ii*div,(ii+1)*div-1)
+    }
+  } else {
+    $o1.pad(1.5*prn*div)
+    rdm.discunif(0,prn-1)  PRv.setrand(rdm)
+    rdm.discunif(0,pon-1)  POv.setrand(rdm)
+    $o1.elimrepeats("PR","PO")
+    $o1.shuffle()
+    $o1.pad(prn*div)
+  }
+  $o1.fill("CODE",1,preid) $o1.fill("CODE",2,posid)
+}
+
+//** synconn3() doesn't worry about eliminating repeats
+proc synconn3 () { local preid,posid,pdiv,con,div,ii,jj,prn,pon
+  if (numarg()==0) { print "\tsynconn2(preid,postid,prn,pon,pdiv)" return }
+  preid=$2 posid=$3 prn=$4 pon=$5 pdiv=$6
+  $o1.clear()
+  PRv=$o1.v[$o1.fi("PR")] POv=$o1.v[$o1.fi("PO")]
+  con=int(pdiv*prn+1) div=int(pdiv*pon)
+  if (prn*div==0) return
+  printf("%s->%s:\tdiv=%d,conv=%d (%d syns)\n",CTYP.object(preid).s,CTYP.object(posid).s,div,con,prn*div)
+  $o1.pad(prn*div)
+  rdm.discunif(0,prn-1)  PRv.setrand(rdm)
+  rdm.discunif(0,pon-1)  POv.setrand(rdm)
+  $o1.fill("CODE",1,preid) $o1.fill("CODE",2,posid)
+}
+
+//*** pickpost() tries to reduce divergence variance
+// pickpost(postlist,maxcon,YO)
+// maxcon == -1 means to ignore convergence
+// MUST do convec.resize() and convec.fill(0) before using
+func pickpost () { local ran, maxcon, maxpo, min, indx
+  maxcon = $2  // max convergence to be allowed
+  maxpo = $1   // number of postsyn choices
+  min = convec2.min  // convec should start all 0's
+  if (min >= maxcon) { // all full up
+    printf("Pickpost full WARNING: %d %d\n",min,maxcon) vlk(convec2) }
+  convec1.indvwhere(convec2,"==",min)  // look for all the smallest to fill up first
+  inx = convec1.x[rdm.discunif(0,convec1.size-1)]
+  convec.x[inx]+=1
+  convec2.x[inx]=1e10 // block from reconnecting here
+  return inx
+}
+
+//** smap()
+// excitatory cells project to AMPA and inhibitory cells to GABA
+// assumes PRIDv ... defined by sp.mo(1)
+objref pro,poo // pre and post pointers
+func smap () { local ct,sy,conv,prdx,podx,prx,pox,delx,w0x,w1x localobj nc,ty
+  ty=new Union()
+  ct=cp.fi("PRID") sy=cp.fi("STYP")
+  sp.resize("NC")
+  sp.odec("NC")
+  sp.pad()
+  sp.mo(1)
+  for ii=0,PRv.size-1 {
+    uncodf(CODEv.x[ii],&prdx,&podx) prx=PRv.x[ii] pox=POv.x[ii]
+    delx=DELv.x[ii] w0x=WT0v.x[ii] w1x=WT1v.x[ii]
+    pro=c[prdx].object(prx) poo=c[podx].object(pox)
+    NCv.x[ii]=sp.fcdo.append(nc=smap1(prdx))-1
+    for kk=0,nc.wcnt-1 nc.weight[kk]=0
+    x=cp.fetch(ct,prdx,sy)
+    syntyp(x,ty)
+    nc.weight[ty.x]=w0x
+    if (ty.x[1]>-1) nc.weight[ty.x[1]]=w1x
+    nc.delay=delx
+  }
+  return ii
+}
+
+//*** smap1(SYN#) poo has postsyn and pro has pre
+obfunc smap1 () { localobj si
+  if (poo.fflag) { YO=poo 
+  } else {
+    YO=poo.po[$1]
+    if (isobj(YO,"List")) {
+      snsr($1,poo)
+      YO=YO.object(YO.count-1)
+    }
+  }
+  if (pro.fflag) {            si=new NetCon(pro,    YO)
+  } else {           pro.soma si=new NetCon(&v(0.5),YO) }
+  return si
+}
+
+//*** snsr() handles situation where multiple PPs must be hung onto postsyn objref
+proc snsr () {
+  printf("PROBLEM: replace snsr() which uses an execute\n")
+  if (isobj($o2.po[$1],"List")) {
+    sprint(tstr,"%s.soma %s.po[%d].append(new %s(0.5))",$o2,$o2,$1,STYP.object($1).s)
+  } else {
+    sprint(tstr,"%s.soma %s.po[%d] = new %s(0.5)",$o2,$o2,$1,STYP.object($1).s)
+  }
+  execute(tstr)
+}
+
+//** umbrella(preid,postid,max,width[,shift])
+// set lateral projections from pre to post out to width
+// sets direct connection (jj==ii) iff preid!=posid
+proc umbrella () { local ii,jj,preid,posid,width,sh,max,sz,styp1,styp2
+  preid=$1 posid=$2 max=$3 width=$4 
+  if (numarg()>=5) sh=$5 else sh=0
+  sz=PRv.size styp1=styp2=-1
+  if (width) { 
+    for ii=0,max-1 for jj=ii-width+sh,ii+width+sh {
+      if (jj>=0 && jj<max && (preid!=posid || jj!=ii)) {
+        PRv.append(ii) POv.append(jj) 
+        PRIDv.append(preid) POIDv.append(posid)
+      }
+    }
+  } else { // just within column connections
+    for ii=0,max-1 { PRv.append(ii) POv.append(ii) PRIDv.append(preid) POIDv.append(posid) }
+  }
+  sp.pad()
+  // WID0v.fill(styp1,sz,PRv.size-1)
+  // WID1v.fill(styp2,sz,PRv.size-1)
+}
+
+//** umbflow(preid,postid,max,width[,shift])
+// like umbrella but does 'flow' boundary conditions -- reflects back on sides
+proc umbflow () { local ii,jj,ja,preid,posid,width,sh,max,sz,styp1,styp2
+  preid=$1 posid=$2 max=$3 width=$4 
+  if (numarg()>=5) sh=$5 else sh=0
+  sz=PRv.size styp1=styp2=-1
+  if (width) { 
+    for ii=0,max-1 for jj=ii-width+sh,ii+width+sh {
+      if (preid!=posid || jj!=ii) { ja=jj
+        if (jj<0) ja=-jj
+        if (jj>max-1) ja=2*max-jj-2
+        PRv.append(ja) POv.append(ii) 
+        PRIDv.append(preid) POIDv.append(posid)
+      }
+    }
+  } else { // just within column connections
+    for ii=0,max-1 { PRv.append(ii) POv.append(ii) PRIDv.append(preid) POIDv.append(posid) }
+  }
+  sp.pad()
+  // WID0v.fill(styp1,sz,PRv.size-1)
+  // WID1v.fill(styp2,sz,PRv.size-1)
+}
+
+//** nqdiv(PRID,POID,PR,PO0[,PO1,...]) 
+// nqdiv(PRID,POID,PR,POBEG,..,POEND)
+proc nqdiv () { local i,beg,end
+  if (numarg()==0) { 
+    print "nqdiv(PRID,POID,PR,PO0[,PO1,...])\nnqdiv(PRID,POID,PR,POBEG,\"..\",POEND)" return }
+  if (numarg()==6 && argtype(5)==2) {
+    beg=$4 end=$6
+    for i=beg,end sp.append("CODE",EQU1,$1,"CODE",EQU2,$2,"PR",$3,"PO",i)
+  } else for i=4,numarg() sp.append("CODE",EQU1,$1,"CODE",EQU2,$2,"PR",$3,"PO",$i)
+  sp.pad()
+}
+
+//** nqconv(POID,PRID,PO,PR0[,PR1,...]) 
+// nqconv(POID,PRID,PO,PRBEG,..,PREND)
+proc nqconv () { local i,beg,end
+  if (numarg()==0) { 
+    print "nqconv(POID,PRID,PO,PR0[,PR1,...])\nnqconv(POID,PRID,PO,PRBEG,\"..\",PREND)" return }
+  if (numarg()==6 && argtype(5)==2) {
+    beg=$4 end=$6
+    for i=beg,end sp.append("PRID",$2,"POID",$1,"PR",i,"PO",$3)
+  } else for i=4,numarg() sp.append("PRID",$2,"POID",$1,"PR",$i,"PO",$3)
+  sp.pad()
+}
+
+//** proc nq1to1(PRID,POID,num)
+proc nq1to1 () { umbrella($1,$2,$3,0) }
+
+//* direct weight setting routines
+//** scale gmax
+proc synscgmax () {
+  for ltr(XO,cvode.netconlist("" , "", $s1)) { XO.weight *= $2 }
+}
+//** set/get gmax
+proc synsetgmax () {
+  if (numarg()==0) { print "synsetgmax(pre,post,type,wt)"
+  } else if (numarg()==2) {for ltr(XO,cvode.netconlist("" , "", $s1)) XO.weight=$2
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist("" , $s1, $s2)) XO.weight=$3
+  } else if (numarg()==4) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) XO.weight=$4
+  } else { print "ERROR: too many args" }
+  if (i1==0) printf("WARNING: nothing set in synsetgmax(%s ...)\n",$s1)
+}
+
+// synnormgmax() -- like synsetgmax except normalizes the wt by convergence
+proc synnormgmax () {
+  for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) {
+    XO.weight=$4/cvode.netconlist($s1,XO.postcell,$s3).count
+  }
+}
+
+proc syngetgmax () {
+  if (numarg()==1) {
+    if (strcmp($s1,"help")==0) { printf("type,post/type,pre/post/type\n") } else {
+      for ltr(XO,cvode.netconlist("" , "", $s1)) printf("%g ",XO.weight) }
+  } else if (numarg()==2) {for ltr(XO,cvode.netconlist("" , $s1, $s2)) printf("%g ",XO.weight)
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) printf("%g ",XO.weight)
+  } else for ltr(XO,cvode.netconlist("","","")) printf("%g ",XO.weight)
+  print ""
+}
+ 
+//** set/get delay
+proc synsetdel () {
+  if (numarg()==2) {for ltr(XO,cvode.netconlist("" , "", $s1)) XO.delay=$2
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist("" , $s1, $s2)) XO.delay=$3
+  } else if (numarg()==4) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) XO.delay=$4
+  } else { print "ERROR: too many args" }
+  if (i1==0) printf("WARNING: nothing set in synsetdel(%s ...)\n",$s1)
+}
+
+proc syngetdel () {
+  if (numarg()==1) {for ltr(XO,cvode.netconlist("" , "", $s1)) printf("%g ",XO.delay)
+  } else if (numarg()==2) {for ltr(XO,cvode.netconlist("" , $s1, $s2)) printf("%g ",XO.delay)
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) printf("%g ",XO.delay)
+  } else for ltr(XO,cvode.netconlist("","","")) printf("%g ",XO.delay)
+  print ""
+}
+ 
+//** set/get thresh
+proc synsetthr () {
+  if (numarg()==1) {for ltr(XO,cvode.netconlist("" , "", "")) XO.threshold=$1
+  } else if (numarg()==2) {for ltr(XO,cvode.netconlist($s1 , "", "")) XO.threshold=$2
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist($s1, "", $s2)) XO.threshold=$3
+  } else if (numarg()==4) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) XO.threshold=$4
+  } else { print "ERROR: too many args" }
+  if (i1==0) printf("WARNING: nothing set in synsetthr(%s ...)\n",$s1)
+}
+
+proc syngetthr () {
+  if (numarg()==1) {for ltr(XO,cvode.netconlist($s1 , "", "")) printf("%g ",XO.threshold)
+  } else if (numarg()==2) {for ltr(XO,cvode.netconlist($s1, "", $s2)) printf("%g ",XO.threshold)
+  } else if (numarg()==3) {for ltr(XO,cvode.netconlist($s1 , $s2, $s3)) printf("%g ",XO.threshold)
+  } else for ltr(XO,cvode.netconlist("","","")) printf("%g ",XO.threshold)
+  print ""
+}
+ 
+//** synremove: remove post, pre/post, pre/post/type; synshow
+proc synremove () {
+  if (numarg()==0) { printf("synremove: remove post, pre/post, pre/post/type\n") return }
+  if (numarg()==1) tmplist = cvode.netconlist("", $s1 , "")
+  if (numarg()==2) tmplist = cvode.netconlist("", $s1, $s2)
+  if (numarg()==3) tmplist = cvode.netconlist($s1 , $s2, $s3)
+  if (tmplist.count>0) for ltr(XO,tmplist) ncl.remove(ncl.index(XO))
+  tmplist = nil // need to remove these references too
+  if (numarg()==1) tmplist = cvode.netconlist("", $s1 , "")
+  if (numarg()==2) tmplist = cvode.netconlist("", $s1, $s2)
+  if (numarg()==3) tmplist = cvode.netconlist($s1 , $s2, $s3)
+  if (tmplist.count>0) for ltr(XO,tmplist) printf("ERROR: %s removed from ncl but still exists\n",XO)
+  tmplist = nil
+}
+  
+proc synshow () { 
+  sprint(temp_string_,"x=XO.%s",$s2)
+  for ltr(XO,cvode.netconlist("" , "", $s1)) { execute(temp_string_) printf("%g ",x) }
+  print ""
+}
+
+//* weight setting routines using NQS
+//** stwt(PREID,POSTID,WT0[,WT1,norm])
+// stwtnorm() causes dividing by individual convergence values
+proc stwt () { local w0,w1
+  if (sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2) ==0) {
+    printf("WARNING NO CONNECTS FROM %d TO %d\n",$1,$2) return }
+  w0=$3
+  if (numarg()>=5) {  w0=$3/$5 w1=$4/$5 } else if (numarg()>=4) { w1=$4 }
+  if (numarg()>=4) sp.fillin("WT0",w0,"WT1",w1) else sp.fillin("WT0",w0)
+}
+
+//** strwt(PREID,POSTID,WT0,WT1,psdev[,norm])
+proc strwt () { local w0,w1,psdev
+  cnt=sp.select("CODE",EQU1,$1,"CODE",EQU2,$2)
+  if (cnt==0) {printf("WARNING NO CONNECTS FROM %d TO %d\n",$1,$2) return }
+  if (numarg()>=6) {  w0=$3/$6 w1=$4/$6 } else {  w0=$3 w1=$4 }
+  psdev=$5
+  rdm.lognormal(w0,psdev*psdev*w0*w0)
+  sp.out.v[sp.fi("WT0")].setrand(rdm)
+  if (w1!=0) {
+    rdm.lognormal(w1,psdev*psdev*w1*w1)
+    sp.out.v[sp.fi("WT1")].setrand(rdm)
+  }
+  sp.delect()
+}
+
+//** strwt2(NQS,WT0,WT1,psdev[,norm])
+proc strwt2 () { local w0,w1,psdev
+  if (numarg()>=5) {  w0=$2/$5 w1=$3/$5 } else {  w0=$2 w1=$3 }
+  psdev=$4
+  rdm.lognormal(w0,psdev*psdev*w0*w0)
+  $o1.v[$o1.fi("WT0")].setrand(rdm)
+  if (w1!=0) {
+    rdm.lognormal(w1,psdev*psdev*w1*w1)
+    $o1.v[$o1.fi("WT1")].setrand(rdm)
+  }
+}
+
+//** strdel(PREID,POSTID,del,psdev)
+proc strdel () { local del0,psdev
+  if (numarg()==4) {
+    cnt=sp.select("CODE",EQU1,$1,"CODE",EQU2,$2)
+    if (cnt==0) {printf("WARNING NO CONNECTS FROM %d TO %d\n",$1,$2) return }
+    del0=$3 psdev=$4
+    rdm.lognormal(del0,psdev*psdev*del0*del0)
+    sp.out.v[sp.fi("DEL")].setrand(rdm)
+    sp.delect()
+  } else { del0=$2 psdev=$3
+    rdm.lognormal(del0,psdev*psdev*del0*del0)
+    $o1.v[sp.fi("DEL")].setrand(rdm)
+  }
+}
+
+//** clrwt(PRID,POID,%clr)
+proc clrwt () { local n
+  n=round($3*sp.select("CODE",EQU1,$1,"CODE",EQU2,$2))
+  sp.out.v[sp.fi("WT0")].fill(0,0,n)
+  sp.delect()
+}
+
+//** chksp() confirm correspondance between sp and ncl -- defunct if using multiple ncl
+proc chksp () { local prid,poid,pr,po
+  for ltr(XO,ncl,&x) {
+    prid=sp.v[0].x[x] poid=sp.v[1].x[x] pr=sp.v[2].x[x] po=sp.v[3].x[x] 
+    if (XO.pre.id!=pr || XO.pre.type!=prid ||  XO.syn.id!=po || XO.syn.type!=poid) {
+      printf("%d %d %d %d %d %d %d %d\n",XO.pre.id,pr,XO.pre.type,prid,XO.syn.id,po,XO.syn.type,poid)  }}
+}
+
+//** swtmap() -- redund code to permit it to run relatively fast
+// no longer overloaded to set delay, delmap() or to clr clrwts()
+proc swtmap () { local ii,ct,sy,conv,prx,pox,delx,w0x,w1x localobj nc,ty
+  ty=new Union()
+  ct=cp.fi("PRID") sy=cp.fi("STYP")
+  if (PRv.size!=$o1.count) { 
+    printf("swtmap ERR: size discrepency: %d vs %d\n",PRv.size,$o1.count)
+    return }
+  for ii=0,PRv.size-1 {
+    prdx=PRIDv.x[ii] podx=POIDv.x[ii] prx=PRv.x[ii] pox=POv.x[ii]
+    delx=DELv.x[ii] w0x=WT0v.x[ii] w1x=WT1v.x[ii]
+    nc=$o1.object(ii)
+    poo=nc.syn
+    x=cp.fetch(ct,prdx,sy)
+    syntyp(x,ty)
+    nc.weight[ty.x]=w0x
+    if (ty.x[1]>-1) nc.weight[ty.x[1]]=w1x
+    nc.delay=delx
+  }
+}
+
+//** wmul(PRID,POID,SYNID,MUL) multiplies set of syns by a factor
+// resets from weights stored in sp
+for ii=0,CTYPi-1 for jj=0,CTYPi-1 for kk=0,STYPi-1 wd0[ii][jj][kk]=1
+proc wmul () { local ii,pr1,po1,sy1,w1,wd,sy2
+  pr1=$1 po1=$2 sy1=$3 w1=$4
+  if (wd0[pr1][po1][sy1]==0) {
+    if (w1!=0) printf("\nWARNING: %s->%s(%s) set to 0 can't reset\n",\
+                      CTYP.o(pr1).s,CTYP.o(po1).s,STYP.o(sy1).s)
+    return
+  }
+  wd=w1/wd0[pr1][po1][sy1]
+  if (wd!=1) {
+    XO=ncl[pr1][po1][0]
+    for ii=0,XO.count-1 XO.o(ii).weight[sy1]*=wd
+    wd0[pr1][po1][sy1]=w1
+  } else printf(".")
+} 
+
+//** wset(PRID,POID,SYNID,WT) resets weights to gaussian dist similar to strwt()
+// uses sp to determine how many weights are needed
+proc wset () { local num,prx,pox,sox,wet,a,err,psdev localobj v1
+  prx=$1 pox=$2 sox=$3 wet=$4 
+  if (numarg()==5) psdev=$5*$5 else psdev=0
+  err=0 a=allocvecs(v1)
+  if (cp.fetch("PRID",prx,"STYP")==EX && !(sox==AM || sox==NM)) err=1
+  if (cp.fetch("PRID",prx,"STYP")==IX && !(sox==GA || sox==GB)) err=1
+  if (err) { printf("cell/syn discrepancy: %d -> %d\n",prx,sox) return }
+  if (Incol==2) num=sp.select(-1,"CODE",EQU1,prx,"CODE",EQU2,pox) else {
+    num=sp.select(-1,"CODE",EQU1,prx,"CODE",EQU2,pox,"CODE",EQU3,Incol)
+  }
+  v1.resize(num)
+  if (psdev) { 
+    rdm.normal(wet,psdev*wet*wet) 
+    v1.setrand(rdm)
+  } else v1.fill(wet)
+  vwtmap(v1,sp,sox)
+  dealloc(a)
+}
+
+//** wbim(PRID,POID,SYNID,PSDEV,%A,WTA,%B,WTB,...) bimodal weight setting routines
+// uses sp to determine how many weights are needed
+proc wbim () { local fsz,i,prx,pox,sox,wet,a,err,psdev,pcw,ptot localobj v1,v2
+  prx=$1 pox=$2 sox=$3 psdev=$4*$4 pcw=$5 wet=$6 ptot=0
+  err=0 a=allocvecs(v1,v2)
+  if (cp.fetch("PRID",prx,"STYP")==EX && !(sox==AM || sox==NM)) err=1
+  if (cp.fetch("PRID",prx,"STYP")==IX && !(sox==GA || sox==GB)) err=1
+  if (err) { printf("cell/syn discrepancy: %d -> %d\n",prx,sox) return }
+  fsz=sp.select(-1,"CODE",EQU1,prx,"CODE",EQU2,pox)
+  for i=5,numarg() {
+    pcw=$i i+=1 wet=$i // 
+    if (pcw*fsz != int(pcw*fsz)){
+      printf("wbim WARNING: %d->%d non-int %gx%g=%g\n",prx,sox,pcw,fsz,pcw*fsz) }
+    v2.resize(int(pcw*fsz))
+    rdm.normal(wet,psdev*wet*wet) 
+    v2.setrand(rdm)
+    v1.append(v2)
+    ptot+=pcw // keep track of percent filled
+  }
+  if (ptot!=1) printf("wbim WARNING: %d->%d only %g filled\n",prx,pox,ptot)
+  if (v1.size!=fsz) {
+    printf("wbim WARNING: %d->%d size error %d->%d\n",prx,sox,v1.size,fsz)
+    v1.resize(fsz) }
+  vwtmap(v1,sp,sox)
+  dealloc(a)
+}
+
+//** vwtmap(VEC,NQS) -- copy weights from a vector onto ncl
+//   vwtmap(NQS,VEC) -- copy weights from ncl into vector
+func vwtmap () { local wix
+  if (numarg()==3) wix=$3 else wix=0
+  if (isojt($o2,sp)) { // copy from vector to sp.fcdo weights 
+    if ($o1.size!=$o2.ind.size){
+      printf("vwtmap ERR: size discrepency: %d vs %d\n",$o1.size,$o2.ind.size)
+      return 0}
+    for ii=0,$o1.size-1 $o2.fcdo.o[$o2.ind.x[ii]].weight[wix]=$o1.x[ii]
+    return $o1.size
+  } else { // copy from ncl weights to vector
+    if ($o1.ind.size!=$o2.size){printf("vwtmap WARNING: resizing vec\n") $o2.resize($o1.ind.size)}
+    for ii=0,$o2.size-1 $o2.x[ii]=$o1.o[$o1.ind.x[ii]].weight[wix]
+    return $o2.size
+  }
+}
+
+//** wtstat(WIX) -- check id of weights directly from the ncs
+// assume that have already been selected in sp.out
+proc wtstat () { local wix,a,sz,fnc localobj v1
+  a=allocvecs(v1)
+  if (!eqojt(sp.cob,sp.out)) print "WARNING: no sp.select() done"
+  sz=sp.size(1) fnc=sp.fi("NC")
+  v1.resize(sz) v1.resize(0)
+  if (numarg()==1) wix=$1 else wix=0
+  // for sp.qt(XO,"NC") v1.append(XO.weight[wix]) // 5x slower
+  for ii=0,sz-1 v1.append(sp.fcdo.o(sp.out.v[fnc].x[ii]).weight[wix])
+  stat(v1)
+  dealloc(a)
+}
+
+// need to set delays 
+proc delmap () { local ii,deli,nc0,nc1
+  nc0=$o1.fi("NC0") nc1=$o1.fi("NC1","NOERR") deli=$o1.fi("DEL")
+  for ii=0,$o1.v.size-1 {
+    ncl.object($o1.v[nc0].x[ii]).delay=$o1.v[deli].x[ii]
+    if (nc1!=-1) if ($o1.v[nc1].x[ii]!=-1) {
+      ncl.object($o1.v[nc1].x[ii]).delay=$o1.v[deli].x[ii] }
+  }
+}
+
+// clrwtmap
+proc clrwts () { local ii,jj,nc0,wt0,deli,nc1,wt1,typ,sy2,wid0,wid1,clr
+  nc0=$o1.fi("NC0") wt0=$o1.fi("WT0") deli=$o1.fi("DEL") 
+  wid0=$o1.fi("WID0") typ=$o1.fi("TYPE")
+  nc1=$o1.fi("NC1","NOERR") wt1=$o1.fi("WT1","NOERR") wid1=$o1.fi("WID1","NOERR")
+  tobj=ncl.object($o1.v[nc0].x[ii])
+  for ii=0,$o1.v.size-1 { 
+    tobj=ncl.object($o1.v[nc0].x[ii])
+    for jj=0,tobj.wcnt-1 tobj.weight[jj]=0 // clear
+    tobj.delay=1 tobj.threshold=0 
+    if (nc1!=-1) if ($o1.v[nc1].x[ii]!=-1) for jj=0,tobj.wcnt-1 tobj.weight[jj]=0 // clear
+  }
+}
+
+// swtchk(sp,"WT0","NC0") compare weights to sp weights
+func swtchk () { local ii,jj,nc0,wt0,n
+  nc0=$o1.fi($s3) wt0=$o1.fi($s2)  n=0
+  for ii=0,$o1.v.size-1 { 
+    if ($o1.v[nc0].x[ii]==-1) continue
+    tobj=ncl.object($o1.v[nc0].x[ii])
+    if ($o1.v[wt0].x[ii]==tobj.weight) n+=1 else {
+      printf("Mismatch %d: %g %g\n",ii,$o1.v[wt0].x[ii],tobj.weight) }
+  }
+  tobj=nil
+  return n/ii
+}
+
+// synchk() look for internal consistency
+proc synchk () { 
+  for ltr(XO,cvode.netconlist("","","")) if (isassigned(XO.postcell) && XO.weight<0) {
+    printf("Error for %s with wt %g\n",XO.syn,XO.weight)
+  }
+}
+
+//** getwt() useful in eg sp.spr("<NC0>.c.apply('getwt')")
+func getwt () { return NetCon[$1].weight }
+
+spnormflag = 0 // set this flag to normalize weights by number of projections
+//** actumb(PRID,POID,WIDTH) -- clears umbrella and then set sp.ind to chosen umbrella
+proc actumb () { local width,flag,divisor
+  width=$3
+  if (width==-1) flag=1 else flag=0
+  sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2) 
+  if (! flag) { // width=-1 is flag for full connection
+    if (sp.fi("WT1")!=-1) sp.fillin("WT0",0,"WT1",0) else sp.fillin("WT0",0)
+    sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2,"DIST","()",-width,width)
+  }
+  if (! spnormflag) { // just set the values
+    if (sp.fi("WT1")!=-1 && numarg()==5) sp.fillin("WT0",$4,"WT1",$5) else sp.fillin("WT0",$4)
+  } else { // need to calculate convergence for individual cells here
+  }
+}
+
+//** inline(PRID,POID,WT) sets the in-column weights
+proc inline () { local a
+  sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2,"PR",EQV,"PO")
+  if (numarg()==4) sp.fillin("WT0",$3,"WT1",$4) else sp.fillin("WT0",$3)
+}
+
+// stwtnorm(PREID,POSTID,WT0[,WT1,CONVVEC])
+func stwtnorm () { local cv,a,b,ret
+  a=b=allocvecs(2) b+=1
+  if (sp.select("CODE",EQU1,$1,"CODE",EQU2,$2)==0) {
+    printf("WARNING NO CONNECTS FROM %d TO %d\n",$1,$2) return 0 }
+  sp.uniq("PO") // only retains unique values of PO => cv>0
+  mso[a].copy(sp.out.v[sp.fi("PO")])
+  for vtr(&x,mso[a]) {
+    cv=sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2,"PO",x) // do select without copy to out
+    mso[b].append(cv) 
+    if (cv>0) {
+      if (numarg()==4) sp.fillin("WT0",$3/cv,"WT1",$4/cv) else sp.fillin("WT0",$3/cv)
+    }
+  }
+  ret=mso[b].mean // mean convergence
+  if (numarg()==4) if (argtype(4)==1) $o4.copy(mso[b])
+  if (numarg()==5) if (argtype(5)==1) $o5.copy(mso[b])
+  dealloc(a)
+  return ret
+}
+
+// wtnorm(PREID,POSTID) -- normalize the values according to convergence
+func wtnorm () { local cv,a,b,ret,wt0,wt1
+  wt0=sp.fi("WT0") wt1=sp.fi("WT1") 
+  if (sp.select(-1,"CODE",EQU1,$1,"CODE",EQU2,$2)==0) {
+    printf("WARNING NO CONNECTS FROM %d TO %d\n",$1,$2) return }
+  a=b=allocvecs(2) b+=1
+  sp.uniq("PO") // only retains unique values of PO => cv>0
+  mso[a].copy(sp.out.v[sp.fi("PO")])
+  for vtr(&x,mso[a]) {
+    cv=sp.select("CODE",EQU1,$1,"CODE",EQU2,$2,"PO",x)
+    mso[b].append(cv) 
+    if (cv>0) {
+      sp.out.v[wt0].div(cv)
+      if (wt1>-1) sp.out.v[wt1].div(cv)
+      sp.delect()
+    }
+  }
+  ret=mso[b].mean // mean convergence
+  dealloc(a)
+  return ret
+}
+
+
+
+proc setdist () { sp.spr("DIST","<PR>.c.sub(<PO>).apply('abs')") }
+
+proc stwtvar() { local a,idr
+  if (numarg()==5) idr=1 else idr=0
+  a=allocvecs(1)
+  mso[a].resize(sp.ind.size)
+  rdm.uniform($3*(1-$4),$3*(1+$4))
+  mso[a].setrand(rdm)
+  if (spnormflag) mso[a].div(sp.ind.size)
+  sp.wt[idr].indset(sp.ind,mso[a])
+  dealloc(a)
+}
+
+//** snc() -- set the actual netcons to the params in sp
+DEL=DELD=1
+proc snc () { local ii
+  for ii=0,sp.size-1 {
+    nc[sp.nc.x[ii]].threshold=0
+    nc[sp.nc.x[ii]].weight=sp.wt.x[ii]
+    nc[sp.nc.x[ii]].delay=DEL+DELD*sp.dist.x[ii]
+    if (sp.nc[1].x[ii]>-1) {
+      nc[sp.nc[1].x[ii]].weight=sp.wt[1].x[ii]
+      nc[sp.nc[1].x[ii]].delay=DEL+DELD*sp.dist.x[ii]
+    }
+  }
+}
+//** snci() -- take a vec of indices (eg sp.ind) as arg
+proc snci () { local ii,jj
+  for jj=0,$o1.size-1 {
+    ii=$o1.x[jj]
+    nc[sp.nc.x[ii]].weight=sp.wt.x[ii]
+    nc[sp.nc.x[ii]].delay=DEL+DELD*sp.dist.x[ii]
+    if (sp.nc[1].x[ii]>-1) {
+      nc[sp.nc[1].x[ii]].weight=sp.wt[1].x[ii]
+      nc[sp.nc[1].x[ii]].delay=DEL+DELD*sp.dist.x[ii]
+    }
+  }
+}
+
+//* informational procs
+//** proc print_pp_location(PP), from doc/html/refman/nocmodl.html
+proc print_pp_location() { local x //arg1 must be a point process
+   x = $o1.get_loc()
+   sectionname(section)
+   printf("%s located at %s(%g)\n", $o1, section, x)
+   pop_section()
+}
+//** pp_loc(PP,LOC,SCRATCH) returns true if point process PP is located in LOC (regexp match)
+func pp_loc () { local x //arg1 must be a point process
+   x = 0
+   $o1.get_loc()
+   if (numarg()==3) { sectionname($s3) }
+   ifsec $s2 { x = 1 }
+   pop_section()
+   return x
+}
+ 
+
+//* ndivo, ncono, sdivo, scono: objects; ndivs, ncons, sdivs, scons: strings
+//** for use with INTF
+iterator divr () { local ii
+  for ii=0,ncl.count-1 {
+    XO=ncl.object(ii)
+    if (object_id(sfunc.obj(XO.pre.p))==object_id(cells[$1].object($2))) {
+      iterator_statement
+    }
+  }
+}
+
+iterator conr () { local ii
+  for ii=0,ncl.count-1 {
+    XO=ncl.object(ii)
+    if (object_id(sfunc.obj(XO.syn.p))==object_id(cells[$1].object($2))) {
+      iterator_statement
+    }
+  }
+}
+
+//** iterators
+// eg for syt("ns[0]","ns[1]") print XO,YO,nco
+iterator syt () { local num,err
+  err=0
+  canobj($o1,"XO") canobj($o2,"YO") // canobj -- canonical object
+  if ((num=cvode.netconlist(XO,"",YO).count)!=1) { 
+    printf("syt() ERROR num==%d (%s,%s)\n",num,XO,YO) err=1 }
+  if (!err) { 
+    nco=cvode.netconlist(XO,"",YO).object(0)
+    iterator_statement
+  }
+  XO=nil YO=nil nco=nil
+}
+
+// nca makes list backwards -- syn, then postcell, then precell
+iterator nca () { local ii
+  tmplist.remove_all
+  if (numarg()==0) { cvode.netconlist("", "", "",tmplist)}
+  if (numarg()==1) { cvode.netconlist("", "",   $s1,tmplist)}
+  if (numarg()==2) { cvode.netconlist("",  $s2, $s1,tmplist)}
+  if (numarg()==3) { cvode.netconlist($s3, $s2, $s1,tmplist)}
+  for ii=0,tmplist.count-1 {
+    XO=tmplist.object(ii)
+    iterator_statement
+  }
+}
+
+func wtvec () {
+  revec(vec)
+  for nca($s1) vec.append(XO.weight)
+  vlk(vec)
+  return vec.size
+}
+
+func dlyvec () {
+  revec(vec)
+  for nca($s1) vec.append(XO.delay)
+  vlk(vec)
+  return vec.size
+}
+
+iterator prtr () {  local ii
+  tmplist.remove_all
+  for ii=0,cvode.netconlist("", $s1, "").count-1 { 
+    nco=cvode.netconlist("", $s1, "").object(ii)
+    iterator_statement 
+  }
+}
+iterator potr () {  local ii
+  for ii=0,cvode.netconlist($s1,"","").count-1 {
+    nco=cvode.netconlist($s1,"","").object(ii)
+    iterator_statement 
+  }
+}
+iterator sytr () {  local ii
+  for ii=0,cvode.netconlist("","",$s1).count-1 { 
+    nco=cvode.netconlist("","",$s1).object(ii)
+    iterator_statement 
+  }
+}
+
+proc sdivo () {for ltr(XO,cvode.netconlist($o1, "", "")) prsxo() }
+func ndivo () { return cvode.netconlist($o1, "", "").count }
+func ncono () { return cvode.netconlist("", $o1, "").count }
+proc scono () {for ltr(XO,cvode.netconlist("", $o1, "")) prsxo() }
+func ndivs () { 
+  if (numarg()==1) return cvode.netconlist($s1, "", "").count else {
+                   return cvode.netconlist("" , "", "").count }
+}
+func ncons () { return cvode.netconlist("", $s1, "").count }
+proc sdivs () { for ltr(XO,cvode.netconlist($s1, "", "")) prsxo() }
+proc scons () { 
+  if (numarg()==0) for ltr(XO,cvode.netconlist("", "", ""))  prsxo()
+  if (numarg()==1) for ltr(XO,cvode.netconlist("", $s1, ""))  prsxo()
+  if (numarg()==2) for ltr(XO,cvode.netconlist("", $s1, $s2)) prsxo()
+  if (numarg()==3) for ltr(XO,cvode.netconlist($s1, $s2,$s3)) prsxo()
+}
+ 
+// print pre,post,syntype,threshold,weight,delay
+proc prsxo () {
+  if (isobj(XO.precell,"NULLobject")) {
+    printf("%s:%s->%s (%s) (t%g,w%g,d%g)\n",XO,XO.pre,XO.postcell,XO.syn,XO.threshold,XO.weight,XO.delay)
+  } else {
+    printf("%s:%s->%s (%s) (t%g,w%g,d%g)\n",XO,XO.precell,XO.postcell,XO.syn,XO.threshold,XO.weight,XO.delay)
+  }
+}
+
+//*  avwtsp(), actwsc(), avwt() to get proper weight values
+obfunc sysel () { local pr,po,sy,co,vb,num
+  if (numarg()==1) sy=$1 else { // already selected
+    pr=$1 po=$2 sy=$3 co=$4
+    num=sp.select("CODE",EQU1,pr,"CODE",EQU2,po,"CODE",EQU3,co)
+    if (num==0) { vec0.resize(0) 
+      return vec0} // kludge to get an error returned
+  }
+  if ((pr==IN && sy==GA) || sy==AM) return sp.getcol("WT0",0) else return sp.getcol("WT1",0)
+}
+
+//** avwtsp(PR,PO,COL) looks at NQS db to determine weights -- 7x faster than avwt() below
+//   avwtsp(sp) if do select before checking this
+obfunc avwtsp () {  local a,s1,s2,pr,po,co,wd localobj sp0,v1,o,vr
+  pr=$1 po=$2 co=$3 sp0=sp o=new Union()
+  a=allocvecs(v1)
+  if (name_declared("netstem")==4) {
+    sprint(tstr,"%s%sS%02d.spnqs",netstem,CTYP.o(po).s,scale)
+    if (! strm(tstr,sp0.file)) { printf("Reading %s (was %s)\n",tstr,sp0.file)
+      sp0.rd(tstr)
+    }
+  }
+  if (pr==IN) {s1=GA s2=GB} else {s1=AM s2=NM}
+  if (numarg()==4) sp0=$o4.cob else {
+    sp0.verbose=0
+    vr=sysel(pr,po,s1,co)
+    if (vr.size==0 && verbose) {printf("%s->%s EMPTY\n",CTYP.o(pr).s,CTYP.o(po).s) return sp0}}
+  sp0.verbose=0
+  wd=ncq.ay(pr,po,s1,co).x
+  vr.mul(wd)
+  stat(vr,v1) // 0size,1max,2min,3mean,4sdev
+  o.x=v1.x[3]
+  printf("%s->%s %s %s: max: %g; min: %g; mean: %g; sdev: %g\n",\
+         CTYP.o(pr).s,CTYP.o(po).s,STYP.o(s1).s,INCOL.o(co).s,\
+         v1.x[1],v1.x[2],v1.x[3],v1.x[4])
+  wd=ncq.ay(pr,po,s2,co).x
+  vr=sysel(s2)  vr.mul(wd)  stat(vr,v1)
+  o.x[1]=v1.x[3]
+  printf("%s->%s %s %s: max: %g; min: %g; mean: %g; sdev: %g\n",\
+         CTYP.o(pr).s,CTYP.o(po).s,STYP.o(s2).s,INCOL.o(co).s,\
+         v1.x[1],v1.x[2],v1.x[3],v1.x[4])
+  sp0.verbose=1
+  dealloc(a)
+  return o
+}
+
+//** actwsc(PR,PO,SY,COCODE,COL,[,tMIN,tMAX])
+func actwsc () { local ret,f1,a,wd,we,pr,po,min,max,u,x,y,sy,co,col,prspks,th,conv,diff localobj v1,v2,vr,q,p
+  if (numarg()==0) {
+    printf(" actwsc(PR,PO,SY,COCODE,COL,[,tMIN,tMAX])\n") return 0 }
+  pr=$1 po=$2 sy=$3 co=$4 col=$5
+  // min,max: just look at activity during this period
+  if (numarg()>5) {min=$6 max=$7} else {min=0 max=tstop}
+  if (min==max) f1=0 else f1=1
+  a=allocvecs(v1,v2) q=new NQS() q.verbose=0 p=printlist
+  if (f1) {
+    // find name for raster plot should be eg 'SU'
+    for ltr(XO,printlist) if (strc(XO.name,CTYP.o(pr).s)) {x=i1 break} 
+    for ixt(pr,col) v2.append(ixi) // get the values for this col
+    q.resize("time",p.o(x).tvec,"ind",p.o(x).vec)
+    u=q.select("time","[]",min,max,"ind","[]",v2.min,v2.max) // u=number of spikes in period
+    min=q.applf(".min","time") max=q.applf(".max","time") 
+    q.out.v.sort()  y=q.out.v.uniq() // y= uniq spikers
+    if (max-min<10) diff=10 else diff=max-min
+    // prspks = y/diff/numc[pr]*10 // number of spikes in 1 cell spike per 10ms
+    prspks = y/diff/numc[pr]*ncols*10 // normalize by no. of cols
+    x=prspks*(conv=cp.fetch("PRID",pr,"POID",po,"CONV")) // incoming spks over 10ms
+  }
+  sp.verbose=0  vr=sysel(pr,po,sy,co) sp.verbose=1
+  if (vr.size==0) {dealloc(a) return -1}
+  vrsz(ce,v1,"O")
+  for ixt(po) v1.append(XO.VTH-XO.RMP)
+  stat(v1,v2) th=v2.x[3] // threhold stats
+  wd=ncq.ay(pr,po,sy,co).x // current scaling factor
+  we=4 // 4 cells must fire at about same time to get thresh-level drive
+  if (f1) {
+    printf("%s:%d,%d spks/%.2fms ~ %.2f spks/10ms (%d/%d)\n",\
+           CTYP.o(pr).s,u,y,max-min,prspks,x,conv)
+    printf("Thresh: %.2f+/-%.2f PSP: %.2f+/-%.2f\n",th,v2.x[4],vr.mean,vr.stdev)
+    printf("\tFor 1/%d continuous activation: ",we)
+    // wd *= threshold/spks_in/<PSP>/weighting // wd is scaling_factor
+    printf("\nwmul(%s,%s,%s,%s,%g)\n",\
+           CTYP.o(pr).t,CTYP.o(po).t,STYP.o(sy).t,INCOL.o(co).t,\
+           th/x/vr.mean/we*wd)
+    ret=th/x/vr.mean/we*wd
+  } else {
+    printf("%s->%s %s,%s: %g\n",\
+           CTYP.o(pr).s,CTYP.o(po).s,STYP.o(sy).s,INCOL.o(co).s,\
+           vr.mean*wd/th*100) // percent of threshold
+    ret=vr.mean*wd/th*100
+  }
+  dealloc(a)
+  return ret
+}
+
+//** avwt() goes through ncl list to sum weights
+proc avwt () {  local pr,po,sy,co localobj nc,o
+  pr=$1 po=$2 sy=$3 co=$4
+  o=ncq.ay(pr,po,sy,co)
+  vrsz(o.o.count,ind,"O")
+  for ltr(nc,o.o) ind.append(nc.weight[sy])
+  ind.mul(o.x) // mutiply by scale factor
+  if (ind.mean!=0) {
+    printf("%s%s %s: ",CTYP.o(pr).s,CTYP.o(po).s,STYP.o(sy).s) 
+    stat(ind)
+  }
+}
+
+//* grvec addendum -- new_printlist_
+//** new_printlist_nc(obj,id[,NAME]) records spikes from obj to vitem in printlist
+// with NAME creates a new vitem
+warn_flag=1
+obfunc new_printlist_nc () { local id,thresh,yoset localobj xo,yo,ox,cvn
+  ox=$o1 id=$2 thresh=-20 yoset=0
+  if (!isojt(ncl,tmplist)) ncl=new List()
+  if (numarg()>=3) {
+    if (argtype(3)==2) { 
+      printlist.append(yo=new vitem($s3,100))
+      yoset=1
+    } else if (argtype(3)==0) { thresh=$3
+    } else printf("new_printlist_nc arg 3 should be name or thresh\n")
+  }
+  if (numarg()>=4) thresh=$4
+  if (!yoset) if (printlist.count==0) { 
+    printlist.append(yo=new vitem("SPKS",100))
+  } else { 
+    yo=printlist.object(printlist.count-1) // continue with the last one
+  }
+  if (isobj(ox,"NetCon")) {  xo=ox // use this NetCon
+  } else {
+    cvn=cvode.netconlist(ox, "", "")
+    if (cvn.count==0) { // no netcons available
+      if (! warn_flag) printf(".") else { 
+        warn_flag=0 // only warn first time
+        printf("WARNING (new_printlist_nc) creating NetCon for %s ",ox) }
+        if (ox.fflag) {  xo=new NetCon(ox, nil)
+        } else { ox.soma xo=new NetCon(&v(x), nil) }
+        xo.threshold=thresh
+        ncl.append(xo)
+    } else {
+      xo=cvn.object(0) // the first of the postsyn netcons
+      if (0) if (xo.threshold!=thresh && isassigned(xo.precell)) {
+        printf("Warning: new_printlist_nc resetting thresh for %s\n",xo)
+        xo.threshold=thresh
+      }
+    }
+  }
+  xo.record(yo.tvec,yo.vec,id)
+  return yo
+}
+
+//** proc new_printlist_nc2(VITEM,CELL,ID#) -- don't bother looking for an existing synapse
+obfunc new_printlist_nc2 () { local id,thresh,yoset localobj xo,ox
+  ox=$o2 id=$3 thresh=-20 yoset=0
+  if (isobj(ox,"NetCon")) {  xo=ox // use this NetCon
+  } else {
+    if ($o2.fflag) {  xo=new NetCon($o2, nil)
+    } else { $o2.soma xo=new NetCon(&v(x), nil) }
+    xo.threshold=thresh
+    ncl.append(xo)
+  }
+  xo.record(ox.tvec,ox.vec,id)
+  return xo
+}
+
+//** fipre(NETCON) find a presynaptic index for a netcon
+func fipre () { local nu
+  if (isassigned($o1.pre)) { // a point-process
+    return objnum($o1.pre)
+  } else {
+    if ($o1.preloc==-1) {
+      printf("fipre() ERR: %s\n",$o1) err() }
+    sscanf(secname(),"%*[^[][%d]",&x) // find number of the cell
+    // eg grvecstr="PYR2 sINT sTC  sRE" // use locations in this string as id
+    if (sfunc.len(grvecstr)==0) {
+      return x
+    } else {
+      sscanf(secname(),"%[^[]",tstr)
+      nu=sfunc.substr(grvecstr,tstr)/5
+      return nu*50+x
+    }
+    pop_section()
+  }
+}
+
+//** fspks (index,vec) put spike times for index in vec
+// fspks (index,vec,num)  use printlist.object(num).vec
+// fspks (index,vec,spkvec,tvec)
+proc fspks () { local a,b,ix
+  a=b=allocvecs(2) b+=1
+  if (numarg()==2) { ix=$1 XO=printlist.object(0).vec YO=printlist.object(0).tvec }
+  if (numarg()==3) { ix=$1 XO=printlist.object($3).vec YO=printlist.object($3).tvec }
+  if (numarg()==4) { ix=$1 XO=$o3 YO=$o4 }
+  revec($o2)
+  mso[a].indvwhere(XO,"==",ix)
+  $o2.index(YO,mso[a])
+  dealloc(a)
+}
+
+// fspks1(index,vec)
+proc fspks1 () { local a,b,ix
+  if (numarg()==2) { ix=$1 XO=printlist.object($1).vec YO=printlist.object($1).tvec }
+  if (numarg()==4) { ix=$1 XO=$o3 YO=$o4 }
+  $o2.resize(XO.size)
+  $o2.xing(XO,YO,thresh) // times
+}
+
+//** spktimes(plist#,cell#)  prints out spike times from a tvec/ivec printlist item
+// spktimes(tvec,vec,cell#)
+func spktimes () { local sz,wh,a,i localobj va,vb,tv,vv,o
+  a=allocvecs(va,vb)
+  i=0 // i serves as flag for saving to a vector
+  if (numarg()==4) {
+    tv=$o1 vv=$o2 wh=$3 i=4
+  } else if (numarg()==3) {
+    if (argtype(1)==1) {
+      tv=$o1 vv=$o2 wh=$3
+    } else {
+      o=printlist.object($1) wh=$2 vv=o.vec tv=o.tvec
+      i=3
+    }
+  } else {
+    if (numarg()==2) {
+      o=printlist.object($1) wh=$2
+    } else if (numarg()==1) {
+      o=printlist.object(0)  wh=$1
+    } else wh=-1
+    vv=o.vec tv=o.tvec
+  }
+  sz=vv.size
+  if (wh==-1) { vlk(tv,vv) 
+  } else {
+    va.indvwhere(vv,"==",wh)
+    vb.index(tv,va)
+    sz=vb.size
+    if (i) $oi.copy(vb) else vlk(vb)
+  }
+  dealloc(a)
+  return sz
+}
+
+//** ceqi() cvode.event_queue_info(3,...)
+proc ceqi () { local flag,ii
+  flag=$1
+  tmplist.remove_all revec(ind,vec)
+  printf("\n\n\t**** t=%g ****\n\n",t)
+  if (flag==3) {
+    cvode.event_queue_info(3, ind, vec, tmplist)
+    for ltr(XO,tmplist,100) printf("t=%g flag=%d nc=%s\n",ind.x[i1],vec.x[i1],XO)
+  } else if (flag==2) {
+    cvode.event_queue_info(2, ind, tmplist)
+    for ltr(XO,tmplist,100) { printf("t=%g %s->%s:",ind.x[i1],XO.pre,XO.syn)
+      for ii=0,XO.wcnt-1 printf("%g ",XO.weight[ii])
+      print ""
+    }
+  } else if (flag==0) {
+    for ltr(XO,ncl,10) { printf("%s->%s:",XO.pre,XO.syn)
+      for ii=0,XO.wcnt-1 printf("%g ",XO.weight[ii])
+      print ""
+    }
+  }
+}
+
+//** new_printlist_ac(obj,name[,NAME,num]) 
+// adds params from an artificial cell with built-in vec dumping
+obfunc new_printlist_ac () { local i,max,num,svloc,sz,tsz localobj lo,st
+  npacsz=1.2 st=new String()
+  if(name_declared("vdt_INTF")==5) {
+    vdt = vdt_INTF
+    st.s="INTF"
+  } else if(name_declared("vdt_INTF6")==5) {
+    vdt = vdt_INTF6
+    st.s="INTF6"
+  } else print "new_printlist_ac warning: no INTF/INTF6 found!"
+  lo = new Union()
+  if (numarg()>=4) num=$4
+  if (numarg()==4) { sprint(lo.s,"%s%d.%s",$s3,$4,$s2) 
+  } else {           sprint(lo.s,"%s.%s",$o1,$s2)  }
+  if (tstop<=1e4) tsz=tstop else tsz=1e4
+  sz=npacsz*tsz/vdt
+  vite = new vitem(lo.s,sz)
+  vite.o=$o1
+  if ($o1.recflag==0) {  // record tvec
+    vite.tvec=new Vector(sz)
+    $o1.initrec("time",vite.tvec)
+  } else {
+    for ltr(YO,printlist) if (eqobj($o1,YO.o)) vite.tvec=YO.tvec
+    if (!isassigned(vite.tvec)) printf("ERR %s %s not found in printlist\n",st.s,$o1)
+  }
+  vite.tvflag=1
+  $o1.initrec($s2,vite.vec)
+  printlist.append(vite)
+  return vite
+}
+
+objref pfih
+psgchk = 1
+proc psend () { local tt
+  for ltr(XO,printlist) {
+    if (strm(XO.var,"[()][()]$")) {
+      revec(XO.vec,XO.tvec)
+      for (tt=psgchk;tt<=tstop;tt+=psgchk) {
+        sprint(tstr,"%s.append(%s)",XO.vec,XO.var)
+        cvode.event(tt,tstr)
+        sprint(tstr,"%s.append(t)",XO.tvec)
+        cvode.event(tt,tstr)
+      }
+    }
+  }
+}
+
+// eg new_printlist_fc("intf.M1()")
+// obsolete since intf.mod no longer defines M1(),M2(),...
+obfunc new_printlist_fc () {
+  if (! isassigned(pfih)) { pfih = new FInitializeHandler("psend()") }
+  if (! strm($s1,"\\(\\)$")){print "Should be func eg intf.M1()" return }
+  XO = new vitem($s1,0)
+  printlist.append(XO)
+  return XO
+}
+  
+
+//* misc and commentary
+// con=absolute convergence number, div=absolute div number
+// con = %con * pre
+// div * pre = con * post = S (total synapses)
+// %div = div/post = S/(pre*post) = con/pre = %con
+// div = %con * post
+// maxdiv = int((1 + var) * div)
+ 
+//** vari returns randomly chosen $1+/-$2, $2 is a percent
+func frani () { return int(rdm.uniform($1,$2+1)) }
+func uvari () { return $1 - $1*$2 + (rdm.uniform(0,1) * 2 * $1*$2) }
+func gvari () { return $1 - (rdm.normal(0,1) * $1*$2) }
+
+//** clearsyns() 
+proc clearsyns () { 
+  for ltr(XO,ncl) XO.active(0)
+  ncl.remove_all 
+  for ltr(XO,new List("NetCon")) printf("**** CLEARSYN WARNING %s STILL EXISTS ****\n",XO)
+}
+
+// findstr() look thru list for a string and return the index
+func findstr () { local flag
+  flag = -1 // failure
+  for ltr(XO,$o2) {
+    if (strcmp($s1,XO.s) == 0) flag=i1
+  }
+  return flag
+}
+
+//** syntyp() reads syntyps out of cp directory
+proc syntyp () { local x 
+  x=$1
+  if (x==EX) {$o2.x=AM $o2.x[1]=NM  // excit
+  } else if (x==IX) {$o2.x=GA $o2.x[1]=GB // inhib
+  } else $o2.x[1]=-1
+}
+
+//** excitp(PRE) -> T if cell is excitatory
+func excitp () { 
+  if ($1==SU || $1==DP || $1==TC) return 1
+  if ($1==RE || $1==IN) return 0
+  printf("ID not classified in excitp\n")
+  return -1
+}
+
+//* Saving and reading
+//** svnet() rdnet()
+proc svnet () { local ii
+  ii=0
+  if (numarg()==1) filename=$s1 else {
+    sprint(filename,"data/%s%c.net",datestr,97+ii)
+    while (tmpfile.ropen(filename)) sprint(filename,"data/%s%c.net",datestr,97+ii+=1)
+    printf("nqsnet output to %s\n",filename)
+  }
+  XO=usefiles("nqs.hoc","syncode.hoc","nqsnet.hoc","labels.hoc")
+  cp.comment=XO.s
+  sp.comment=XO.s
+  cp.sv(filename)
+  sp.sv(filename,1)
+  tmpfile.close()
+}
+
+proc rdnet () {
+  filename=$s1
+  if (!isobj(cp,"NQS")) {cp=new NQS() sp=new NQS()}
+  printf("reading network file %s\n",filename)
+  cp.rd(filename)
+  sp.rd() // continue reading
+  tmpfile.close()
+}
+
+//** svstate() rdstate() rerun()
+proc svstate () {
+  if (! isobj(svs,"SaveState")) svs=new SaveState()
+  svs.save
+  tmpfile.wopen($s1)
+  svs.fwrite(tmpfile)
+}
+
+proc rdstate () {
+  if (! isobj(svs,"SaveState")) svs=new SaveState()
+  tmpfile.ropen($s1)
+  svs.fread(tmpfile)
+  svs.restore
+}
+
+proc initrr () { printf("WARNING: initrr() -- init for rerun() -- not defined\n") }
+
+proc rerun () { local tstp,told
+  tstp=tstop
+  if (numarg()>0) rdstate($s1) else svs.restore
+  if (numarg()==1) if (argtype(1)==0) tstp=$1
+  if (numarg()>1) tstp=$2
+  told=t
+  initrr()
+  if (t!=told) {
+    printf("ERROR: initrr() appears to have reset t (finitialize()?) (%d->%d)\n",told,t) 
+    return
+  }
+  sprint(tstr,"cvode.solve(%g)",t+tstp)
+  time(tstr)
+  finish()
+}
+
+// mkvspks(NUMCELLS,NUMGROUPS,INVL1,SPREAD,[APPEND])
+// produces ivspks index vector and vspks time vector for inserting activations
+// groups are not stable -- they are reconstituted at each spiking time
+// NUMCELLS   indices will be drawn from 0..NUMCELLS-1 
+// NUMGROUPS  will give the separate groupings for simultaneous activation across a group
+//            there will be NUMCELLS/NUMGROUPS cells in each group
+// INVL1      is the average interval in ms between the inputs
+// SPREAD     is the +/- SPREAD/2 sloppiness in this interval 
+// APPEND     is a flag saying to add on to existing ivspks/vspks vectors
+proc mkvspks () { local gcnt,numc,numg,inv1,inv2,a,ii,j,apflg localobj iv,tv
+  numc=$1 numg=$2 inv1=$3 inv2=$4 apflg=0
+  if (numarg()>=5) if ($5) apflg=1 // 5th arg is append flag
+  if (!apflg) revec(ivspks,vspks)
+  gcnt = int(numc/numg) // number of cells in each group
+  a=allocvecs(iv,tv)
+  for ({ii=20 j=0};ii<tstop-20;{ii+=inv1 j+=1e-8}) {
+    iv.indgen(0,numc-1,1) // assume that start from intf#0
+    shuffle(iv)
+    iv.resize(gcnt) // now have a set of cells that need to spike at
+    iv.add(j) // add a little bit to ensure that sortindex below preserves forward time
+    tv.resize(gcnt)
+    rdm.uniform(-inv2/2,inv2/2)
+    tv.setrand(rdm)
+    tv.add(ii)
+    ivspks.append(iv) vspks.append(tv)
+    if (j>=1-1e-8) printf("mkvspks ERR: j>=1\n") // should never happen
+  }
+  ivspks.sortindex(iv)
+  tv.index(vspks,iv)  vspks.copy(tv)
+  tv.index(ivspks,iv) ivspks.copy(tv)
+  ivspks.rnd()
+  wvspks.resize(ivspks.size)
+  dealloc(a)
+}
+
+obfunc netconlist () { 
+  if (numarg()==1) {
+    if (argtype(1)==1) return cvode.netconlist("","",$o1)
+    if (argtype(1)==2) return cvode.netconlist("",$s2,"")
+  }
+  return cvode.netconlist("","","") 
+}
+
+//* mkncq() -- this may not be useful since will slow down smap() still more
+proc smap () { } // stub
+proc mkncq () { local pr,po,sy,co localobj o
+  if (!isassigned(ncq)) {
+    ncq=new NQS("PRID","POID","SYN","INCOL","SCALE","NCL")
+    ncq.odec("NCL")
+    ncq.useslist("PRID",CTYP) ncq.useslist("POID",CTYP) 
+    ncq.useslist("SYN",STYP)  ncq.useslist("INCOL",INCOL) 
+  }
+  ncq.clear()
+  sp.out.mo(1) // for smap
+  // no syn specificity for ARTCELLs -- assume no NM w/out AM, no GB w/out GA
+  for case(&pr,DP,SU,IN) for case(&po,DP,SU,IN) for case(&co,INC,RIT,LFT) {
+    if (sp.select("CODE",EQU1,pr,"CODE",EQU2,po,"CODE",EQU3,co) == 0) {
+      // printf("%s->%s (%s) EMPTY\n",CTYP.o(pr).s,CTYP.o(po).s,INCOL.o(co).s)
+    } else {
+      if (pr==IN) sy=GA else sy=AM
+      o=ncl[pr][po][co]
+      ncq.append(pr,po,sy  ,co,1,o) // AM,GA
+      ncq.append(pr,po,sy+1,co,1,o) // NM,GB
+      smap(pr,po,sy,co,o)
+    }
+  }
+}
+
+proc smap () { local prdx,w0x,w1x,pr,po,sy,co localobj o
+  pr=$1 po=$2 sy=$3 co=$4 o=$o5
+  for ii=0,PRv.size-1 { // need prior sp.out.mo(1)
+    w0x=WT0v.x[ii] w1x=WT1v.x[ii] 
+    nc=new NetCon(ce.o(PRv.x[ii]),ce.o(POv.x[ii]),-10,DELv.x[ii],0)
+    o.append(nc)
+    for kk=0,nc.wcnt-1 nc.weight[kk]=0
+    if (pr==IN) { 
+      nc.weight[GA]=w0x
+      if (w1x>0) nc.weight[GB]=w1x
+    } else {
+      nc.weight[AM]=w0x
+      if (w1x>0) nc.weight[NM]=w1x
+    }
+  }
+}
+
+proc smap () { printf("NOW using dedicated smap() routines in network.hoc") }
+
+//* nrstim - stim cells with noise/random input
+// nrstim(celltype,[,maxt,clear,seed,nqs])
+// maxt specifies time after which input turned off
+// clear specifies whether to clear nqs passed in (or vq if declared)
+// global params are pvar,pwght,prate,ppos described below
+declare("pvar",2)     //variance of noise input
+declare("pwght",0)    //mean value of noise input
+declare("prate",1000) //sampling rate for random input
+declare("ppos",1)     //use abs value only -- should be 1 otherwise intf cant handle it!!!
+func nrstim () { local a,tt,i,j,ti,maxt,ct localobj rdp,vr,vt,vi,nq
+  rdp=new Random() nq=nil
+  a=allocvecs(vr,vt,vi)
+  if(numarg()>1) maxt=$2 else maxt=tstop
+  if(numarg()>4) nq=$o5 else if(name_declared("vq")) nq=vq
+  if(nq==nil) {
+    printf("nrstim ERRA: input nq==nil!\n") dealloc(a) return 0
+  }
+  if(numarg()>2) {
+    if($3) nq.clear() 
+  } else nq.clear()  
+  if(numarg()>3) rdp.ACG($4) else rdp.ACG(1234)
+  rdp.normal(pwght,pvar)
+  vt.indgen(0,maxt,1000/prate) vi.resize(vt.size) vr.resize(vt.size)
+  for i=ix[$1],ixe[$1] {
+    vr.setrand(rdp) if(ppos) vr.abs()
+    vi.fill(i)   nq.v[0].append(vi)    nq.v[1].append(vt)    nq.v[2].append(vr)
+  }
+  nq.sort("time") nq.sort("ind")
+  intf.initvspks(nq.v,nq.v[1],nq.v[2])
+  dealloc(a)
+  return 1
+}
+
+//* subthstim(celltype,% of type,start,end,multiplier,bias,[nqs -- default is vq]) 
+//this function takes the stim nqs , selects random % of cells (0-100), and between
+//start and end times multiplies the stim values by multiplier and adds bias
+//if the 7th argument is absent, the vq NQS should be declared, non-nil
+//& should have been initialized with nrstim or setnrstim
+func subthstim () { local startt,endt,fctr,ct,prc,bias,idx,a localobj vid,nq
+  ct=$1 prc=$2 startt=$3 endt=$4 fctr=$5 bias=$6 a=allocvecs(vid) nq=nil
+  if(numarg()>6) nq=$o7 else if(name_declared("vq")) nq=vq
+  if(nq==nil) {
+    printf("subthstim ERRA: input nq is nil!!\n")    dealloc(a)
+    return 0
+  }
+  vid.resize(numc[ct]) vid.fill(0)
+  vid.fill(1,0,int(numc[ct]*prc/100)) vid.shuffle()
+  idx=nq.select(-1,"ind","[]",ix[ct],ixe[ct],"time","[]",startt,endt) printf("ni=%d\n",idx)
+  for vtr(&idx,nq.ind) if(nq.v[2].x(idx)>0 && vid.x(nq.v[0].x(idx)-ix[ct])>0) {
+    nq.v[2].x(idx) = nq.v[2].x(idx)*fctr+bias
+  }
+  dealloc(a)
+  return 1
+}
+

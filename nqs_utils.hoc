@@ -1,0 +1,4 @@
+// $Id: nqs_utils.hoc,v 1.35 2008/06/04 14:55:44 billl Exp $ 
+
+printf("WARNING nqs_utils.hoc functions moved to decnqs.hoc .... now loading\n")
+load_file("decnqs.hoc")

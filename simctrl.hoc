@@ -1,0 +1,91 @@
+// $Id: simctrl.hoc,v 1.14 2000/11/27 21:59:33 billl Exp $
+// Graphic routines for neuremacs simulation control
+
+proc sim_panel () {
+  xpanel(simname)
+        xvarlabel(output_file)
+	xbutton("Init", "stdinit()")
+	xbutton("Init & Run", "run()")
+	xbutton("Stop", "stoprun=1")
+	xbutton("Continue till Tstop", "continueRun(tstop)")
+	xvalue("Continue till", "runStopAt", 1, "{continueRun(runStopAt) stoprun=1}", 1, 1)
+	xvalue("Continue for", "runStopIn", 1, "{continueRun(t + runStopIn) stoprun=1}", 1,1)
+	xbutton("Single Step", "steprun()")
+	xvalue("Tstop", "tstop", 1, "tstop_changed()", 0, 1)
+	graphmenu()
+	sim_menu_bar()
+	misc_menu_bar()
+  xpanel()
+}
+
+proc misc_menu_bar() {
+  xmenu("Miscellaneous")
+    xbutton("Label Graphs", "labelgrs()")
+    xbutton("Label With String", "labelwith()")
+    xbutton("Label Panel", "labelpanel()")
+	xbutton("Parameterized Function", "load_template(\"FunctionFitter\") makefitter()")
+  xmenu()
+}
+
+proc sim_menu_bar() {
+  xmenu("Simulation Control")
+    xbutton("File Vers", "elisp(\"sim-current-files\")")
+    xbutton("File Status...", "elisp(\"sim-rcs-status\")")
+    xbutton("Sim Status", "elisp(\"sim-portrait\")")
+    xbutton("Load Current Files", "elisp(\"sim-load-sim\")")
+    xbutton("Load Templates", "elisp(\"sim-load-templates\")") 
+    xbutton("Load File...", "elisp(\"sim-load-file\")") 
+    xbutton("Save Sim...", "elisp(\"sim-save-sim\")")
+    xbutton("Set File Vers...", "elisp(\"sim-set-file-ver\")")
+    xbutton("Read Current Vers From Index", "elisp(\"sim-read-index-file\")")
+    xbutton("Read Last Saved Vers", "elisp(\"sim-read-recent-versions\")")
+    xbutton("Output to sim buffer", "elisp(\"sim-direct-output\")")
+  xmenu()
+}
+
+proc labelpanel() {
+  xpanel(simname,1)
+	xvarlabel(output_file)
+  xpanel()
+}
+
+proc labels () {
+  labelwith($s1)
+  labelgrs()
+}
+
+proc labelgrs () { local i, j, cnt
+  for j=0,n_graph_lists-1 {
+    cnt = graphList[j].count() - 1
+    for i=0,cnt labelgr(graphList[j].object(i))
+  }
+}
+
+proc labelwith () { local i, j, cnt
+  temp_string_ = user_string_  // save the old one
+  if (numarg() == 1) { /* interactive mode */  
+    user_string_ = $s1
+  } else {
+    string_dialog("write what?", user_string_)
+  }
+  for j=0,n_graph_lists-1 {
+    cnt = graphList[j].count() - 1
+    for i=0,cnt {
+      graphList[j].object(i).color(0)
+      graphList[j].object(i).label(0.5,0.9,temp_string_)
+      graphList[j].object(i).color(1)
+      graphList[j].object(i).label(0.5,0.9,user_string_)
+    }
+  }
+}
+
+proc labelgr () { local i
+  $o1.color(0)  // white overwrite
+  for (i=0;i<10;i=i+1) { // erase every possible runnum for this date
+    sprint(temp_string_,"%s %d%d",datestr,i,i)
+    $o1.label(0.1,0.7,temp_string_) }
+  $o1.color(1) // back to basic black
+  sprint(temp_string_,"%s %02d",datestr,runnum)
+  $o1.label(0.1,0.7,temp_string_)
+}
+

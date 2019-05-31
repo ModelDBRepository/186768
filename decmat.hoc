@@ -1,0 +1,550 @@
+// $Id: decmat.hoc,v 1.72 2010/12/09 20:09:33 samn Exp $ 
+ 
+//** mtriavg(mat,[mask]) - get average of elements in upper triangular part of matrix $o1
+// mask is of same size as mat, has 0 for entries to skip
+func mtriavg () { local i,j,s,c localobj mm,msk
+  mm=$o1 s=c=0
+  if(numarg()>1) { msk=$o2
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 if(msk.x(i,j)) {
+      s+=mm.x[i][j]
+      c+=1
+    }    
+  } else {
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 {
+      s+=mm.x[i][j]
+      c+=1
+    }
+  }
+  if(c>0) return s/c else return 0
+}
+
+//** mltristd(mat,[mask]) - get stdev of elements in upper triangular part of matrix $o1
+// mask is of same size as mat, has 0 for entries to skip
+func mtristd () { local i,j,s,c,s2,tm localobj mm,msk
+  mm=$o1 s=s2=c=0
+  if(numarg()>1) { msk=$o2
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 if(msk.x(i,j)) {
+      s+=mm.x[i][j]
+      s2+=mm.x[i][j]^2
+      c+=1
+    }
+  } else {
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 {
+      s+=mm.x[i][j]
+      s2+=mm.x[i][j]^2
+      c+=1
+    }
+  }
+  if(c>0) return sqrt(s2/c - (s/c)^2) else return 0
+}
+
+//** mltristd(mat,[mask]) - get std-error of elements in upper triangular part of matrix $o1
+// mask is of same size as mat, has 0 for entries to skip
+func mtristderr () { local i,j,s,c,s2,tm localobj mm,msk
+  mm=$o1 s=s2=c=0
+  if(numarg()>0) {
+    msk=$o2
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 if(msk.x(i,j)) {
+      s+=mm.x[i][j]
+      s2+=mm.x[i][j]^2
+      c+=1
+    }
+  } else {
+    for i=0,mm.nrow-1 for j=i+1,mm.ncol-1 {
+      s+=mm.x[i][j]
+      s2+=mm.x[i][j]^2
+      c+=1
+    }
+  }
+  if(c>0) return sqrt(s2/c - (s/c)^2)/sqrt(c) else return 0
+}
+
+//** vi2mi(ind[,COLS]) take index from vector and print out matrix indices using COLS 
+obfunc vi2mi () { local x,co,r,c
+  x=$1
+  if (argtype(2)==0) co=$2 else co=COLS
+  r=int(x/COLS) c=x%COLS
+  if (verbose) print r,c
+  return new Union(r,c)
+}
+
+//** symmclean(vec[,COLS]) remove redundant entries from vector representing a symm matrix
+proc vimiclean() {print "Use symmclean() statt vimiclean()"}
+func symmclean () { local ix,dg,cols,ii,n,flag localobj v1
+  v1=$o1 
+  if (argtype(2)==0) cols=$2 else cols=COLS
+  if (argtype(3)==0) flag=$3 else flag=0 // flag gets rid of the diagonal as well
+  for ii=0,v1.size-1 { ix=v1.x[ii]
+    dg=(n=int(ix/(cols+1)))*(cols+1)
+    if (ix<dg || ix>=dg+(cols-n)) v1.x[ii]=-1
+    if (flag && ix==dg) v1.x[ii]=-1
+  }
+  v1.where(">",-1)
+  return v1.size
+}
+
+//** msqdif(m1,m2) - get matrix with elements squared difference of m1-m2
+obfunc msqdif () { local i,j localobj m1,m2,md
+  m1=$o1 m2=$o2
+  md=new Matrix(m1.nrow,m1.ncol)
+  for i=0,m1.nrow-1 for j=0,m1.ncol-1 md.x[i][j]=(m1.x[i][j]-m2.x[i][j])^2
+  return md
+}
+
+//** mthresh(mat,th) - get matrix with mat elements thresholded : values < t set to 0, >= t to 1
+obfunc mthresh () { local i,j,t localobj mi,mo
+  mi=$o1 t=$2
+  mo=new Matrix(mi.nrow,mi.ncol)
+  for i=0,mo.nrow-1 for j=0,mo.ncol-1 if(mi.x[i][j]>=t) mo.x[i][j]=1 else mo.x[i][j]=0
+  return mo
+}
+
+//** mdif(m1,m2) - get matrix with elements difference of m1-m2
+obfunc mdif () { local i,j localobj m1,m2,md
+  m1=$o1 m2=$o2
+  md=new Matrix(m1.nrow,m1.ncol)
+  for i=0,m1.nrow-1 for j=0,m1.ncol-1 md.x[i][j]=(m1.x[i][j]-m2.x[i][j])
+  return md
+}
+
+//** getttmat(nqs,[column-name]) - uses NQS $o1 to make time-time correlation matrix
+//optional $s2 , otherwise default column-name = 'vc'.
+//column $s2 must be .odec with Vector objects
+obfunc getttmat () { local i,j,inc,szm localobj mc,nq,v1,v2,str,lc
+  {nq=$o1    str=new String()}
+  if(numarg()>1)str.s=$s2 else str.s="vc"
+  {szm=nq.v.size()  mc=new Matrix(szm,szm)  lc=new List()}
+  for i=0,szm-1 lc.append(nq.get(str.s,i).o)
+  for i=0,szm-1 {
+    mc.x(i,i)=1
+    v1=lc.o(i) 
+    for j=i+1,szm-1 {
+      v2=lc.o(j) 
+      mc.x(i,j)=mc.x(j,i)=v1.pcorrel(v2)
+    }
+  }
+  return mc
+}
+
+//** svmat(matrix,path,[writesz,binary]) - save a matrix to file as ascii, each row on new line
+//$o1==matrix, $s2==file path -- will overwrite!! , $3 = optional == 1 to include nrows,ncols
+// writesz = write rows,cols . binary - use binary output format, this will write using vwrite
+// and first two elements of written vector will have rows,cols (so writesz arg is ignored)
+func svmat () { local pr,bin,a localobj m,f,myv1,myv2,mt
+  {m=$o1 a=allocvecs(myv1,myv2) f=new File() f.wopen($s2)}
+  if(!f.isopen()) {
+    printf("svmat ERRA: couldnt open output file %s\n",$s2)
+    return 0
+  }
+  if(numarg()>2)pr=$3 else pr=0
+  if(numarg()>3)bin=$4 else bin=0
+  if(bin) {
+    mt=$o1.transpose()
+    mt.to_vector(myv1)
+    myv2.append($o1.ncol,$o1.nrow)
+    myv2.append(myv1)
+    myv2.vwrite(f)
+  } else {
+    if(pr) m.fprint(f) else m.fprint(0,f)
+  }
+  {f.close() dealloc(a)}
+  return 1
+}
+
+//obfunc rdmat () { local pr localobj m,f
+// m=$o1
+// f=new File()
+// f.wopen($s2)
+// if(!f.isopen()) {
+//   printf("svmat ERRA: couldnt open output file %s\n",$s2)
+//   return 0
+// }
+// if(numarg()>2)pr=$3 else pr=0
+// if(pr) m.fprint(f) else m.fprint(0,f)
+// f.close()
+// return 1
+//}
+
+//** matimagesc - display a matrix ($o1) in matlab using matimgsc program
+// or a text file $s1 , $2 = min scale value , $3 = max scale value, $4 optional
+// binary input flag
+func matimagesc () { local x,binflag localobj str
+  if(numarg()>3) binflag=$4 else binflag=1
+  str=new String2()
+  if(argtype(1)==2) {
+    str.s=$s1
+  } else {
+    str.s="__tmp__mat__ml__.txt"
+    if(!svmat($o1,str.s,1,binflag)) return 0
+  }
+  sprint(str.t,"/usr/site/nrniv/local/matlab/matimgsc %s %g %g %d",str.s,$2,$3,binflag)
+  x = system(str.t)
+  return x
+}
+
+//** pyimagesc - display a matrix ($o1) in python's matplotlib or a text file $s1
+//opt:[$2=min scaling for colors, $3=max scaling for colors, [$s4=title,$s5=xlabel,$s6=ylabel]
+func pyimagesc () { local i,minc,maxc localobj str,cmd,strout,strt,strl,fp
+  str=new String2()
+  strout=new String()//collect stdout from script
+  if(argtype(1)==2) {
+    str.s=$s1
+  } else {
+    str.s="__tmp__mat__py__.txt"
+    if(!svmat($o1,str.s)) return 0
+  }
+  if(numarg()>1)minc=$2 else minc=-1
+  if(numarg()>2)maxc=$3 else maxc=1  
+  if(numarg()>3) { //write title,xlabel,ylabel for pyimgsc.py
+    {strl=new String() strl.s="__tmp__str__py__.txt"    fp=new File()}
+    fp.wopen(strl.s)
+    if(!fp.isopen()){
+      printf("pyimagesc ERRB: couldnt save tmp file %s\n",strl.s)
+      return 0
+    }
+    for i=4,numarg() fp.printf("%s\n",$si)
+    fp.close()
+    sprint(str.t,"/u/samn/python/pyimgsc.py %s %g %g %s",str.s,minc,maxc,strl.s)
+  } else {
+    sprint(str.t,"/u/samn/python/pyimgsc.py %s %g %g",str.s,minc,maxc)
+  }
+  return system(str.t,strout.s)
+}
+
+//** matspecgram(vec,samplingrate,maxfrequency,fftwinsz,[,dodraw,mincolor,maxcolor])
+// if fftwinsz <= 0, matspecgram will pick a WINDOW size for STFT
+obfunc matspecgram () { local a,sampr,maxfreq,dodraw,rows,cols,x,y,minc,maxc,fftwinsz\
+                       localobj vin,fpin,fpout,str,vop,vof,nqo,strin,strout,vtmp,strd
+  vin=$o1 sampr=$2 maxfreq=$3 fftwinsz=$4 fpin=new File() fpout=new File()
+  str=new String() strin=new String() strout=new String() strd=new String()
+  a=allocvecs(vtmp,vop,vof)  if(numarg()>4)dodraw=$5 else dodraw=1  
+  if(!fpin.mktemp || !fpout.mktemp) {
+    print "matspecgram ERR0: couldn't make temp files!"
+    {dealloc(a) return nil}
+  }  
+  {strin.s=fpin.getname strout.s=fpout.getname strd.s="/usr/site/nrniv/local/matlab" fpin.wopen(strin.s)}
+  if(!fpin.isopen()){printf("matspecgram ERRA: couldn't open %s for writing\n",strin.s) dealloc(a) return nil}
+  {vin.vwrite(fpin)  fpin.close()}
+  if(dodraw && numarg()>=7) {
+    sprint(str.s,"%s/matspecgram %s %g %g %d %d %s %g %g",strd.s,strin.s,sampr,maxfreq,fftwinsz,dodraw,strout.s,$6,$7)
+  } else {
+    sprint(str.s,"%s/matspecgram %s %g %g %d %d %s",strd.s,strin.s,sampr,maxfreq,fftwinsz,dodraw,strout.s)
+  }
+  print str.s
+  system(str.s)
+  fpout.ropen(strout.s) 
+  if(!fpout.isopen()){printf("matspecgram ERRB: couldn't open %s for reading\n",strout.s) dealloc(a) return nil}
+  {vop.vread(fpout) vof.vread(fpout)}  
+  {nqo=new NQS("f","pow")  nqo.odec("pow")}
+  {rows=vof.size() cols=vop.size()/rows x=0}
+  for y=0,rows-1 { vtmp.resize(0)
+    vtmp.copy(vop,x,x+cols-1)
+    nqo.append(vof.x(y),vtmp)
+    x+=cols
+  }
+  {fpin.unlink() fpout.unlink()}
+  {dealloc(a) return nqo}
+}
+
+//** matmodind(vec,samplingrate,lohz1,lohz2,hihz1,hihz2)
+// this function calls /usr/site/nrniv/local/matlab/matmodindex to run Canolty's modulation index with Matlab
+// returns an NQS with 1 row containing output
+obfunc matmodind () { local a,sampr,lohz1,lohz2,hihz1,hihz2\
+                       localobj vin,fpin,fpout,str,vop,nqo,strin,strout
+  if(numarg()==0) {printf("matmodind(vec,samplingrate,lohz1,lohz2,hihz1,hihz2)\n") return nil}
+  vin=$o1 sampr=$2 lohz1=$3 lohz2=$4 hihz1=$5 hihz2=$6
+  fpin=new File() fpout=new File() str=new String() strin=new String() strout=new String()
+  a=allocvecs(vop)
+  if(!fpin.mktemp || !fpout.mktemp) {
+    print "matmodind ERR0: couldn't make temp files!"
+    {dealloc(a) return nil}
+  }
+  {strin.s=fpin.getname strout.s=fpout.getname}
+  {fpin.wopen(strin.s)}
+  if(!fpin.isopen()) {printf("matmodind ERRA: couldn't open %s for writing\n",strin.s) dealloc(a) return nil}
+  {vin.vwrite(fpin)  fpin.close()}
+  sprint(str.s,"/usr/site/nrniv/local/matlab/matmodindex %s %g %g %g %g %g %s",strin.s,sampr,lohz1,lohz2,hihz1,hihz2,strout.s)
+  print str.s
+  system(str.s)
+  fpout.ropen(strout.s) 
+  if(!fpout.isopen()){printf("matmodind ERRB: couldn't open %s for reading\n",strout.s) dealloc(a) return nil}
+  {vop.vread(fpout) nqo=new NQS("modind","phase","lohz1","lohz2","hihz1","hihz2")}
+  nqo.append(vop.x(0),vop.x(1),lohz1,lohz2,hihz1,hihz2)
+  {dealloc(a) fpin.unlink() fpout.unlink()}
+  return nqo
+}
+
+//** matpmtm(vec,samplingrate)
+// this function calls /usr/site/nrniv/local/matlab/matpmtm to run multitaper power spectra using matlab, returns an nqs
+obfunc matpmtm () { local a,sampr,rows,cols,x,y\
+                       localobj vin,fpin,fpout,str,vop,vof,nqo,strin,strout
+  if(numarg()==0) {printf("%s\n","matpmtm(vec,samplingrate)") return nil}
+  vin=$o1 sampr=$2 fpin=new File() fpout=new File() str=new String() strin=new String() strout=new String()
+  a=allocvecs(vop,vof)  
+  if(!fpin.mktemp || !fpout.mktemp) {
+    print "matpmtm ERR0: couldn't make temp files!"
+    {dealloc(a) return nil}
+  }
+  {strin.s=fpin.getname strout.s=fpout.getname}
+  {fpin.wopen(strin.s)}
+  if(!fpin.isopen()) {printf("matpmtm ERRA: couldn't open %s for writing\n",strin.s) dealloc(a) return nil}
+  {vin.vwrite(fpin)  fpin.close()}
+  sprint(str.s,"/usr/site/nrniv/local/matlab/matpmtm %s %g %s",strin.s,sampr,strout.s)
+  print str.s
+  system(str.s)
+  fpout.ropen(strout.s) 
+  if(!fpout.isopen()){printf("matpmtm ERRB: couldn't open %s for reading\n",strout.s) dealloc(a) return nil}
+  {vop.vread(fpout) vof.vread(fpout) nqo=new NQS("f","pow")}
+  {nqo.v[0].copy(vof) nqo.v[1].copy(vop) dealloc(a) fpin.unlink() fpout.unlink()}
+  return nqo
+}
+
+//** matfftpow(vec,samplingrate,maxfrequency,[dodraw,dosmooth,smoothwindowsz])
+// this function calls /usr/site/nrniv/local/matlab/matfftpow to run power spectra using matlab, returns an nqs
+// dosmooth controls whether to smooth output, is OFF by default
+// smoothwindowsz controls size of running average smoothing of power spectra output
+obfunc matfftpow () { local a,sampr,maxfreq,dodraw,rows,cols,x,y,dosmooth\
+                       localobj vin,fpin,fpout,str,vop,vof,nqo,strin,strout
+  if(numarg()==0) {printf("%s\n","matfftpow(vec,samplingrate,maxfrequency,[dodraw,dosmooth,smoothwindowsz])") return nil}
+  vin=$o1 sampr=$2 maxfreq=$3 fpin=new File() fpout=new File() str=new String() strin=new String() strout=new String()
+  a=allocvecs(vop,vof)  if(numarg()>3)dodraw=$4 else dodraw=1
+  if(numarg()>4)dosmooth=$5 else dosmooth=0
+  if(!fpin.mktemp || !fpout.mktemp) {
+    print "matfftpow ERR0: couldn't make temp files!"
+    {dealloc(a) return nil}
+  }
+  {strin.s=fpin.getname strout.s=fpout.getname}
+  {fpin.wopen(strin.s)}
+  if(!fpin.isopen()) {printf("matfftpow ERRA: couldn't open %s for writing\n",strin.s) dealloc(a) return nil}
+  {vin.vwrite(fpin)  fpin.close()}
+  if(numarg()>5) {
+    sprint(str.s,"/usr/site/nrniv/local/matlab/matfftpow %s %g %d %d %s %d %d",strin.s,sampr,maxfreq,dodraw,strout.s,dosmooth,$6)
+  } else sprint(str.s,"/usr/site/nrniv/local/matlab/matfftpow %s %g %d %d %s %d",strin.s,sampr,maxfreq,dodraw,strout.s,dosmooth)
+  print str.s
+  system(str.s)
+  fpout.ropen(strout.s) 
+  if(!fpout.isopen()){printf("matfftpow ERRB: couldn't open %s for reading\n",strout.s) dealloc(a) return nil}
+  {vop.vread(fpout) vof.vread(fpout) nqo=new NQS("f","pow")}
+  {nqo.v[0].copy(vof) nqo.v[1].copy(vop) dealloc(a) fpin.unlink() fpout.unlink()}
+  return nqo
+}
+
+//** mathilbert(vec,samplingrate,minfrequency,maxfrequency)
+obfunc mathilbert () { local a,sampr,minfreq,maxfreq\
+                       localobj vin,fp,str,vfilt,vph,vamp,nqo,strin,strout
+  vin=$o1 sampr=$2 minfreq=$3 maxfreq=$4 fp=new File() str=new String() strin=new String() strout=new String()
+  a=allocvecs(vfilt,vph,vamp) 
+  {sprint(strin.s,"__tmp__mat__hilbert__input__vec__.vec")  sprint(strout.s,"__tmp__mat__hilbert_output__vec__.vec")}
+  {fp.wopen(strin.s)}
+  if(!fp.isopen()) {
+    printf("mathilbert ERRA: couldn't open %s for writing\n",strin.s)
+    dealloc(a)
+    return nil
+  }
+  {vin.vwrite(fp)  fp.close()}
+  sprint(str.s,"/usr/site/nrniv/local/matlab/mathilbert %s %g %g %g %s",strin.s,sampr,minfreq,maxfreq,strout.s)
+  print str.s
+  system(str.s)
+  fp.ropen(strout.s) 
+  if(!fp.isopen()) {
+    printf("mathilbert ERRB: couldn't open %s for reading\n",strout.s)
+    dealloc(a)
+    return nil
+  }
+  {vfilt.vread(fp) vph.vread(fp) vamp.vread(fp) nqo=new NQS("filt","phase","amp","t")}
+  {nqo.v[0].copy(vfilt) nqo.v[1].copy(vph) nqo.v[2].copy(vamp)}
+  {nqo.v[3].indgen(0,1e3*nqo.v[2].size/sampr,1e3/sampr)  nqo.v[3].resize(nqo.v[2].size)}
+  dealloc(a)
+  return nqo
+}
+
+//** matprincomp(input Matrix object)
+// returns list with : eigenvectors as Vector, scores as Vector, eigenvalues as Vector, scores as Matrix
+// scores has same size as $o1, eigenvectors is $o1.ncols^2, eigenvalues is $o1.ncols
+// input matrix has rows as observations and columns as dimensions
+obfunc matprincomp () { local i,j,k localobj mcin,fp,str,strin,strout,lsout,vcoeff,vscore,vlat,mscore
+  mcin=$o1 fp=new File() str=new String() strin=new String() strout=new String() lsout=new List()
+  {vcoeff=new Vector() vscore=new Vector() vlat=new Vector()}
+  {sprint(strin.s,"__tmp__mat__princomp__input__mat__.txt")  sprint(strout.s,"__tmp__mat__princomp_output__vec__.vec")}
+  if(!svmat(mcin,strin.s,1)) {
+    printf("matprincomp ERRA: couldn't open %s for writing\n",strin.s)
+    return nil
+  }
+  sprint(str.s,"/usr/site/nrniv/local/matlab/matprincomp %s %s",strin.s,strout.s)
+  print str.s
+  system(str.s)
+  fp.ropen(strout.s) 
+  if(!fp.isopen()) {
+    printf("matprincomp ERRB: couldn't open %s for reading\n",strout.s)
+    return nil
+  }
+  {vcoeff.vread(fp) vscore.vread(fp) vlat.vread(fp) fp.close()}
+  mscore=new Matrix(mcin.nrow,mcin.ncol)
+  mscore.from_vector(vscore) //reads it in in column major order
+  {lsout.append(vcoeff) lsout.append(vscore) lsout.append(vlat) lsout.append(mscore)}
+  return lsout
+}
+
+//** matmin(mat) - return min element of mat
+func matmin () { local i,j,me,tmp localobj m
+  m=$o1 
+  me=m.getrow(0).min()
+  for i=1,m.nrow-1 if((tmp=m.getrow(i).min)<me) me=tmp
+  return me
+}
+
+//** matmax(mat) - return max element of mat
+func matmax () { local i,j,me,tmp localobj m
+  m=$o1 
+  me=m.getrow(0).max()
+  for i=1,m.nrow-1 if((tmp=m.getrow(i).max)>me) me=tmp
+  return me
+}
+
+//** mlk(mat) - use vlk to print rows of matrix
+// a matrix will have it's lower/smaller rows printed first:
+//    1 2 3 
+//    4 5 6 
+//    7 8 9 
+proc mlk () { local i localobj m
+  m=$o1
+  for i=0,m.nrow-1 vlk(m.getrow(i))
+}
+
+//** mateq(mat1,mat2) - return 1 iff matrix row Vectors are eq, 0 otherwise
+func mateq () { local i localobj m1,m2
+  m1=$o1 m2=$o2
+  if(m1.nrow!=m2.nrow || m1.ncol!=m2.ncol) return 0
+  for i=0,m1.nrow-1 if(m1.getrow(i).eq(m2.getrow(i))==0) return 0
+  return 1
+}
+
+//** matavg - return average value in Matrix $o1
+func matavg () { local i,s localobj m
+  m=$o1
+  if(m.nrow<1 || m.ncol<1) {
+    printf("matavg ERRA: empty matrix!\n")
+    return 0
+  }
+  s=0
+  for i=0,m.nrow-1 s += m.getrow(i).sum()
+  return s/(m.nrow*m.ncol)
+}
+
+//** avgmat(list of Matrix) - return Matrix that has its elements avg of elements in $o1 List
+obfunc avgmat () { local sz,i localobj ma
+  sz=$o1.count
+  if(sz<1) return nil
+  ma=new Matrix($o1.o(0).nrow,$o1.o(0).ncol)
+  for i=0,sz-1 ma.add($o1.o(i))
+  ma.muls(1.0/sz)
+  return ma
+}
+
+//** stdmat(list of Matrix) - return Matrix that has its elements stdev of elements in $o1 List
+obfunc stdmat () {  local sz,i,j,k localobj ms,ma
+  sz=$o1.count
+  if(sz<1) return nil
+  ma=new Matrix($o1.o(0).nrow,$o1.o(0).ncol)
+  ms=new Matrix($o1.o(0).nrow,$o1.o(0).ncol)
+  for i=0,sz-1 for j=0,ma.nrow-1 for k=0,ma.ncol-1 {
+    ms.x(j,k) += $o1.o(i).x(j,k)^2
+    ma.x(j,k) += $o1.o(i).x(j,k)
+  }
+  ma.muls(1.0/sz)
+  ms.muls(1.0/sz)  
+  for j=0,ma.nrow-1 for k=0,ma.ncol-1 {
+    ms.x(j,k) -= ma.x(j,k)^2
+    if(ms.x(j,k) > 1e-9) ms.x(j,k) = sqrt(ms.x(j,k)) else ms.x(j,k) = 0
+  }
+  return ms
+}
+
+//** chgmat(list of before Matrices, list of after Matrices) - returns change in each entry in units of std-dev
+obfunc chgmat () { local szbef,szaft,i,j,k localobj lbef,laft,mavg,mstd,lchg,mchg,mt
+  lbef=$o1 laft=$o2
+  szbef=lbef.count szaft=laft.count
+  lchg=new List()
+  mavg=avgmat(lbef)
+  mstd=stdmat(lbef)
+  mchg=new Matrix(mavg.nrow,mavg.ncol)
+  for i=0,szaft-1 {
+    mt=laft.o(i)
+    for j=0,mt.nrow-1 for k=0,mt.ncol-1 {
+      if(mstd.x(j,k)>1e-9) {
+        mchg.x(j,k) += ( mt.x(j,k) - mavg.x(j,k) ) / mstd.x(j,k)
+      } else if(szbef==1) {
+        mchg.x(j,k) += ( mt.x(j,k) - mavg.x(j,k) ) 
+      }
+    }
+  }
+  return mchg
+}
+
+//** getlv(rows,cols) - make a List of Vectors as 2D array
+//$1 == # of rows (vectors), $2 == # of cols (size of vectors)
+obfunc getlv () { local idx,rows,cols localobj ls
+  ls=new List()
+  rows=$1 cols=$2
+  for idx=0,rows-1 ls.append(new Vector(cols))
+  return ls
+}
+
+//** vec2mat(vec,rows) - get a matrix from a vec -- row major order
+obfunc vec2mat () { local i,j,k,rows,cols localobj vin,mout
+  vin=$o1 rows=$2 cols=vin.size/rows mout=new Matrix(rows,cols) k=0
+  for i=0,rows-1 for j=0,cols-1 {
+    mout.x(i,j)=vin.x(k)
+    k+=1
+  }
+  return mout
+}
+
+//** mat2vec(mat) - get a vec from a matrix -- row major order 
+obfunc mat2vec () { local i,j,k,rows,cols localobj mat,vout
+  mat=$o1 rows=mat.nrow cols=mat.ncol i=j=k=0 vout=new Vector(rows*cols)
+  for i=0,rows-1 for j=0,cols-1 {
+    vout.x(k)=mat.x(i,j)
+    k+=1
+  }
+  return vout
+}
+//** mltmed(mat) - get median values from lower-triangular portion - lower triang. means smaller rows
+// this matrix printed as (with printf or mlk):
+//    1 2 3 
+//    4 5 6 
+//    7 8 9 
+// will have mltmed of 3, since uses 2,3,6 from bottom of matrix to get median
+func mltmed () { local i,j,a localobj m,vo
+  a=allocvecs(vo) m=$o1
+  for i=0,m.nrow-1 for j=i+1,m.ncol-1 vo.append(m.x(i,j))
+  return vo.median()
+}
+//** mzerout(mat) - zero out everything >= diagonal
+// a matrix printed as (with printf or mlk):
+//    1 2 3 
+//    4 5 6 
+//    7 8 9 
+// will end up as:
+//    0 2 3 
+//    0 0 6 
+//    0 0 0 
+proc mzerout () { local i,j,a localobj m,vo
+  a=allocvecs(vo) m=$o1
+  for i=0,m.nrow-1 for j=0,i m.x(i,j)=0
+}
+//** matsqsymm(matrix) - return 1 iff matrix is square and symmetric
+func matsqsymm () { local i,j localobj mc
+  mc=$o1  if(mc.nrow!=mc.ncol) return 0
+  for i=0,mc.nrow-1 for j=i+1,mc.ncol-1 if(mc.x(i,j)!=mc.x(j,i)) return 0
+  return 1
+}
+//** getsubmat(matrix,startx,endx,starty,endy) - copy subsection of matrix
+// and return in new output matrix
+obfunc getsubmat () { local x,y,startx,endx,starty,endy localobj m1,msub
+  m1=$o1
+  startx=$2 endx=$3 starty=$4 endy=$5
+  msub=new Matrix(endy-starty+1,endx-startx+1)
+  for y=starty,endy for x=startx,endx msub.x(y-starty,x-startx)=m1.x(y,x)
+  return msub
+}

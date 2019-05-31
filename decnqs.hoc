@@ -1,0 +1,556 @@
+// $Id: decnqs.hoc,v 1.38 2011/03/01 19:06:15 billl Exp $
+
+load_file("nqs.hoc")
+objref nq[10],pq[10]
+
+//** prl2nqs(NQS[,min,max,nointerp]) -- transfer printlist to NQS
+proc rename () {}
+// eg proc rename () { sprint($s1,"P%d",objnum($s1)) }
+obfunc prl2nqs () { local tstep localobj st,oq
+  st=new String2()
+  oq=new NQS()
+  if (numarg()>=1) min=$1 else min=0
+  if (numarg()>=2) max=$2 else max=printlist.count-1
+  if (numarg()>=3) interp=$3 else interp=0 // no interp when looking at spk times
+  if (interp) oq.resize(max-min+2)
+  if (interp) {
+    tstep=0.1 // 0.1 ms step size for interpolation
+    oq.s[0].s="time"
+    oq.v[0].indgen(0,printlist.object(0).tvec.max,tstep)
+    for ii=min,max {
+      XO=printlist.object(ii)
+      oq.s[ii+1-min].s = XO.var
+      rename(oq.s[ii+1-min].s)
+      oq.v[ii+1-min].resize(oq.v.size)
+      oq.v[ii+1-min].interpolate(oq.v[0],XO.tvec,XO.vec)
+    }
+  } else {
+    for ii=min,max {
+      XO=printlist.object(ii)
+      st.s=XO.name
+      sprint(st.t,"%s-time",XO.name)
+      rename(st.s) rename(st.t)
+      oq.resize(st.s,st.t)
+      oq.setcols(XO.vec,XO.tvec)
+    }
+  }
+  return oq
+}
+
+//** pvp2nqs(NQS) -- transfer grvec data file to NQS
+obfunc pvp2nqs () { local min,max,interp,gvnum,ii,jj,n localobj oq,po,st,xo
+  interp=min=max=gvnum=0
+  if (argtype(1)==2) { po=gvnew($s1) gvnum=panobjl.count()-1 }
+  if (argtype(1)==0) gvnum=$1
+  if (numarg()>=2) min=$2
+  if (numarg()>=3) max=$3
+  if (numarg()>=4) interp=$4 // no interp when looking at spk times
+  if (po==nil) po=panobjl.o(gvnum)
+  oq=new NQS() st=new String2()
+  if (gvnum>0) {
+    if (max==0) max=po.llist.count()-1
+    for ii=min,max {
+      xo=po.llist.object(ii)
+      po.tmpfile.seek(xo.loc)
+      if (xo.num==-2) {
+        sprint(st.s,"%s-time",xo.name)
+        jj=oq.resize(st.s)-1
+        oq.v[jj].vread(po.tmpfile)
+      }
+      jj=oq.resize(xo.name)-1
+      oq.v[jj].vread(po.tmpfile)
+    }
+  } else { // from printlist
+    if (max==0) max=printlist.count()-1
+    for ii=min,max {
+      xo=printlist.o(ii)
+      jj=oq.resize(xo.name)-1
+      oq.v[jj].copy(xo.vec)
+      if (xo.pstep==0) {
+        sprint(st.s,"%s-time",xo.name)
+        jj=oq.resize(st.s)-1
+        oq.v[jj].copy(xo.tvec)
+      }
+    }
+  }
+  return oq
+}
+
+//** veclist2nqs(nqs[,STR1,STR2,...])
+proc veclist2nqs () { local flag,i
+  if (numarg()==0) {printf("veclist2nqs(nqs[,STR1,STR2,...])\n") return}
+  $o1.resize(veclist.count)
+  if (numarg()==1+$o1.m) flag=1 else flag=0
+  for ltr(XO,veclist) {
+    $o1.v[i1].copy(XO)
+    if (flag) {i=i1+2 $o1.s[i1].s=$si} else {sprint(tstr,"v%d",i1) $o1.s[i1].s=tstr}
+  }
+  $o1.cpout()
+}
+
+// fudup(vec[,nq,#CUTS,LOGCUT,MIN]) -- use updown() to find spikes
+// LOC(0) PEAK(1) WIDTH(2) BASE(3) HEIGHT(4) START(5) SLICES(6) SHARP(7) INDEX(8) FILE(9) NESTED(10)
+// other options
+pos_fudup=1 // set to 1 to move whole curve up above 0
+maxp_fudup=0.95 // draw top sample at 95% of max 
+minp_fudup=0.05 // draw bottom sample at 5% of max
+over_fudup=1    // turn over and try again if nothing found
+allover_fudup=0 // turn over and add these locs (not debugged)
+verbose_fudup=0 // give messages, can also turn on DEBUG_VECST for messages from updown()
+obfunc fudup () { local a,i,ii,npts,logflag,min,x,sz localobj bq,cq,v1,v2,v3,bb,tl,v5,eq
+  if (verbose_fudup) printf("MAXTIME appears to be %g (dt=%g)\n",$o1.size*dt,dt)
+  logflag=0  npts=10 // n sample locations by default
+  bq=new NQS("LOC","PEAK","WIDTH","BASE","HEIGHT","START","SLICES","SHARP","INDEX","FILE","NESTED") 
+  i=2
+  if (argtype(i)==1) {i+=1 if ($o2==nil) {cq=new NQS() $o2=cq} else cq=$o2} else cq=new NQS()
+  if (cq.m!=11) { cq.resize(0) 
+  cq.resize("LOC","PEAK","WIDTH","BASE","HEIGHT","START","SLICES","SHARP","INDEX","FILE","NESTED")}
+  if (argtype(i)==0){ npts=$i i+=1
+    if (argtype(i)==0){ logflag=$i i+=1
+      if (argtype(i)==1) { v5=$oi i+=1
+        if (npts!=v5.size) printf("Correcting npts from %d to %d\n",npts,npts=v5.size)
+        if (v5.ismono(1)) v5.reverse
+        if (! v5.ismono(-1)) {printf("fudup: final arg (%s) must be monotonic\n",v5) return}
+      }
+    }
+  }
+  bq.listvecs(bb)
+  bq.pad(5000)
+  eq=new NQS(-2,npts) a=allocvecs(v1,v2,v3)
+  tl=eq.vl
+  eq.clear(2e4) vrsz(2e4,v1,v2,v3)
+  v1.copy($o1)
+  if (pos_fudup) {
+    min=v1.min
+    v1.sub(min) // make it uniformly positive
+  } else min=0
+  if (numarg()>4) v2.copy(v5) else {
+    v2.indgen(2,2+npts-1,1)   // sampling at npts points, start at 2 to avoid log(1)=0
+    if (logflag) v2.log() // log sampling
+    v2.scale(-maxp_fudup*v1.max,-minp_fudup*v1.max) v2.mul(-1)
+  }
+  v1.updown(v2,tl,bb)
+  if (pos_fudup) { bq.v[1].add(min) bq.v[3].add(min) }
+  cq.append(bq)
+  sz=bq.size(1)
+  if (allover_fudup) { // do it upside down as well
+    v1.mul(-1) // v2 will be upside-down
+    if (pos_fudup) {min=v1.min v1.sub(min)}
+    if (0) {  // can't see a rationale to recalc sampling points
+      v2.indgen(2,2+npts-1,1)   // sampling at npts points
+      if (logflag) v2.log() // log sampling
+      v2.scale(-0.95*v1.max,-0.05*v1.max) v2.mul(-1)
+    }
+    v1.updown(v2,tl,bb)
+    bq.v[8].add(sz) bq.v[4].mul(-1) // turn HEIGHT upside down
+    cq.append(bq)
+  } else if (over_fudup && sz==0) { // turn it over an try again
+    print "fudup() checking upside-down"
+    v1.mul(-1) // v2 will be upside-down
+    v1.updown(v2,tl,bb)
+  } 
+  for case(&x,0,2,5) cq.v[x].mul(dt)
+  nqsdel(bq,eq)
+  dealloc(a)
+  return cq
+}
+
+//** listsort(LIST[,START,REV]) sorts list of strings numerically
+// optional start gives a regexp to start at
+proc listsort () { local x,rev localobj nq,st,xo
+  if (numarg()==0) { 
+    print "listsort(LIST[,RXP,REV]) numerically, optional RXP starts after there" return}
+  if (numarg()==3) if ($3) rev=-1 else rev=0
+  nq=new NQS("STR","NUM") nq.strdec("STR")
+  st=new String()
+  for ltr(xo,$o1) {
+    if (numarg()>=2) sfunc.tail(xo.s,$s2,st.s) else st.s=xo.s
+    if (sscanf(st.s,"%g",&x)!=1) print "listsort ERR: num not found in ",st.s
+    nq.append(xo.s,x)
+  } 
+  nq.sort("NUM",rev)
+  $o1.remove_all
+  for nq.qt(st.s,"STR") $o1.append(new String(st.s))
+}
+
+// stat(VEC) print stats for the vector
+// stat(VEC1,VEC2) append stats of VEC1 on VEC2
+// stat(VEC1,NQS) append stats of VEC1 on NQS (create if necessary)
+proc stat () { local sz
+  sz=$o1.size
+  if (sz<=1) {printf("decnqs::stat() WARN: %s size %d\n",$o1,$o1.size) return}
+  if (numarg()==1 && sz>1) {
+    printf("Sz:%d\tmax=%g; min=%g; mean=%g; stdev=%g\n",$o1.size,$o1.max,$o1.min,$o1.mean,$o1.stdev)
+  } else {
+    if (!isassigned($o2)) { $o2=new NQS("SIZE","MAX","MIN","MEAN","STDEV")
+    } else if (isobj($o2,"NQS")) { 
+      if ($o2.m!=5) {$o2.resize(0) $o2.resize("SIZE","MAX","MIN","MEAN","STDEV")}
+    } else if (isobj($o2,"Vector")) revec($o2)
+    if (sz>2) {$o2.append($o1.size,$o1.max,$o1.min,$o1.mean,$o1.stdev) // .append for Vector or NQS
+    } else   $o2.append($o1.size,$o1.max,$o1.min,$o1.min,0) // no sdev
+  }
+}
+
+//* fil2nqs(FILE,NQS) reads lines of file and places all numbers in NQS
+func fil2nqs () { local a,n localobj v1
+  $o2.clear
+  a=allocvecs(v1)
+  tmpfile.ropen($s1)
+  for (n=1;tmpfile.gets(tstr)!=-1;n+=1) {
+    if (n%1e3==0) printf("%d ",n)
+    parsenums(tstr,v1)
+    if (v1.size!=$o2.m) {
+      printf("Wrong size at line %d (%d)  ",n,v1.size)  vlk(v1)
+      return
+    }
+    $o2.append(v1)
+  }
+  dealloc(a)
+  return $o2.size(1)
+}
+
+//** plnqs(file,NQS) reads output of txt2num.pl
+// format ascii 'rows cols' then binary contents
+proc plnqs () { local a,rows,cols localobj v1,v2
+  a=allocvecs(v1,v2)
+  tmpfile.ropen($s1)
+  tmpfile.gets(tstr)
+  sscanf(tstr,"%d %d",&rows,&cols)
+  printf("%s: %d rows x %d cols\n",$s1,rows,cols)
+  v1.fread(tmpfile,rows*cols) // could now use .transpose
+  v2.indgen(0,rows*cols,cols)
+  $o2.resize(cols,rows)
+  for ii=0,cols-1 {
+    v2.add(ii)
+    $o2.v[ii].index(v1,v2)
+  }
+  dealloc(a)
+}
+    
+// DEST=maxem(SRC,MIN,WIDTH) -- keep looking for maxima till get down to min
+obfunc maxem () { local a,min,wid,ii,ix,beg,end localobj v1,aq
+  a=allocvecs(v1)
+  aq=new NQS("max","loc") aq.clear(v1.size/2)
+  v1.copy($o1)
+  min=$2 wid=$3
+  while(v1.max>min) {
+   aq.append(v1.max,ix=v1.max_ind)
+   beg=ix-wid if (beg<0) beg=0
+   end=ix+wid if (end>=v1.size) end=v1.size-1
+   for ii=beg,end v1.x[ii]=-1e9
+  }
+  dealloc(a)
+  return aq
+}
+
+// nqo=percl(nq,"COLA", ..) generates NQS of percentile values (10..90) for these cols
+// nqo=percl(nq,min,max,step,"COLA", ..) -- eg percl(nq,50,70,5,"COLA","COLB")
+obfunc percl () {  local i,ii,a,p localobj v1,v2,v3,aq,xo
+  a=allocvecs(v1,v2,v3)
+  aq=new NQS(numarg())
+  if (argtype(2)==0) {
+    v3.indgen($2,$3,$4) 
+    aq.resize(aq.size(1)-3)
+    i=5 j=4 // start at arg i and aq col #j
+  } else {
+    v3.indgen(10,90,10)
+    i=2 j=1
+  }
+  aq.setcol(0,"PERCL",v3)
+  for (;i<=numarg();i+=1) {
+    $o1.getcol($si,v1)
+    v1.sort()
+    v2.resize(0)
+    for vtr(&ii,v3) {ii/=100 v2.append(v1.x[round(ii*v1.size)])}
+    aq.setcol(i-j,$si,v2)
+  }
+  dealloc(a)
+  return aq
+}
+
+// pqunq(NQS) returns columns of sorted nique values corresponding to the arg
+// NB: does not produce a rectangular array
+obfunc pqunq () { local a localobj v1,v2,aq
+  aq=new NQS()
+  a=allocvecs(v1,v2,1e5)
+  aq.sethdrs($o1)
+  aq.resize(-2) 
+  for ii=0,aq.m-1 {
+    $o1.getcol(ii,v1)
+    v1.sort 
+    v2.redundout(v1)
+    aq.v[ii].copy(v2)
+  }
+  dealloc(a)
+  return aq
+}
+
+//** aa=seqind(ind) -- find beginning and end of sequential indices with 
+obfunc seqind () { local a,n,skip,ii,x,last localobj vi,oq
+  vi=$o1
+  if (numarg()>=2) skip=$2+1 else skip=1
+  if (numarg()>=3) oq=$o3
+  if (!isassigned(oq)) {oq=new NQS() if (numarg()>=3) $o3=oq}
+  if (oq.m!=3) { oq.resize(0) oq.resize("beg","end","diff") }
+  oq.clear()
+  n=last=0
+  for ii=1,vi.size(1)-1 {
+    if (vi.x[ii]-vi.x[ii-1]>skip) {
+      if (n>0) oq.append(vi.x[last],vi.x[ii-1],0)
+      last=ii
+      n=0
+    } else n+=1
+  }
+  if (n>0) oq.append(vi.x[last],vi.x[ii-1],0)
+  oq.pad()
+  oq.calc("<diff>.copy(<end>.c.sub(<beg>))")
+  return oq
+}
+
+//** list_transpose
+proc list_transpose () { localobj aq,mat,xo,inlist,outlist
+  aq=new NQS() inlist=$o1 outlist=$o2
+  if (!isojt(outlist,inlist)) {outlist=new List() $o2=outlist}
+  for ltr(xo,inlist) aq.resize("",xo)
+  mat=aq.tomat(1) // transpose
+  aq.frmat(mat)
+  outlist.remove_all
+  aq.listvecs(outlist)
+  delnqs(aq)
+}
+
+//* Sam's additions -- moved from nqs_utils.hoc
+//get row of Vectors
+//$o1 = nqs
+//$2 = row number
+//$s3 - $snumarg() - name of cols to get values for
+//returns list with associated Vectors
+obfunc getobjrow(){ local i,rowid localobj nq,vt,ls
+  nq=$o1 rowid=$2
+  ls=new List()
+  vt=new Vector()
+  for(i=3;i<=numarg();i+=1){
+    nq.get($si,rowid,vt)
+    ls.append(vt)
+  }
+  return ls
+}
+
+//get column of objects as Vector using oform
+//$o1 = nqs
+//$s2 = col name
+//$3=iff==1 return list of Vectors in column, else return vector of oform of each row in column
+obfunc getobjcol(){ local idx,getl localobj nq,vt,vt2,ls
+  nq=$o1
+  if(numarg()>2) getl=$3 else getl=0
+  if(getl){
+    ls=new List()
+    vt=new Vector()
+    for idx=0,nq.size-1{
+      nq.get($s2,idx,vt)
+      ls.append(vt)
+    }
+    return ls
+  } else {
+    vt=new Vector(nq.size)
+    vt.resize(0)
+    vt2=new Vector()
+    for idx=0,nq.size-1{
+      nq.get($s2,idx,vt2)
+      vt.append(oform(vt2))
+    }
+    return vt
+  }
+}
+
+//get correlation between 2 columns of an NQS
+//$o1=nqs
+//$s2=column name
+//$s3=column name
+//$4=pearson correlation iff == 1 (default), otherwise spearman
+func nqcor(){ local pc localobj nq1,v1,v2
+  if(numarg()>3) pc=$4 else pc=1
+  nq1=$o1
+  v1=nq1.getcol($s2)  v2=nq1.getcol($s3)
+  if (pc) return v1.pcorrel(v2) else return v1.scorrel(v2)
+}
+
+//func nqgrslice(){ local startidx,endidx localobj nq,vtmp
+//  nq=$o1 startidx=$2 endidx=$3
+//  vtmp=new Vector($3-$2+1)
+//  gg(
+//}
+
+func MIN(){ if($1<$2)return $1 else return $2 }
+
+//get correlation matrix/nqs of all columns to all columns
+//$o1 = NQS
+//$2 = num columns 0 - NQS.m
+//$3 = start row/index
+//$4 = end row/index
+//$5 = index increment
+//$6 = window size , iff <= 0, do full columns against each other
+obfunc nqcolcor(){ local startidx,endidx,inct,wint,c1,c2,ncol localobj vhr,vhl,nqc,nqf
+ if(numarg()<1){
+   printf("nqcolcor usage: \n\t$o1 = NQS\
+                           \n\t$2 = num columns 0 - NQS.m\
+                           \n\t$3 = start row/index\
+                           \n\t$4 = end row/index\
+                           \n\t$5 = index increment\
+                           \n\t$6 = window size , iff <= 0, do full columns against each other\n")
+   return nil
+ }
+ nqf=$o1
+ if(numarg()>1) ncol=$2 else ncol=nqf.m
+ if(numarg()>2) startidx=$3 else startidx=0
+ if(numarg()>3) endidx=$4 else endidx=nqf.size
+ if(numarg()>4) inct=$5 else inct=50*2//50ms
+ if(numarg()>5) wint=$6 else wint=100*2//50ms
+
+ vhr=new Vector(wint) vhl=new Vector(wint)
+
+ if(wint<=0){ //full column cross-correlation
+   nqc=new NQS("ID0","ID1","cor") 
+   for c1=0,ncol-1{
+     for c2=c1+1,ncol-1{
+       nqc.append(c1,c2,nqf.v[c1].pcorrel(nqf.v[c2]))
+     }
+   }
+ } else { //cross correlation using slices of column
+   nqc=new NQS("ID0","ID1","start","end","cor") 
+   for c1=0,ncol-1{
+     for c2=c1+1,ncol-1{
+       for(startidx=0;startidx<endidx;startidx+=inct){
+         vhl.copy(nqf.v[c1],startidx,MIN(startidx+wint,endidx-1))
+         vhr.copy(nqf.v[c2],startidx,MIN(startidx+wint,endidx-1))
+         nqc.append(c1,c2,startidx,startidx+wint,vhl.pcorrel(vhr))
+       }
+     }
+   }
+ }
+
+ return nqc
+}
+
+ 
+//read wmf ascii file (just skips header and calls rdcol)
+//$s1 = wmf file path
+//$2 = # of columns
+// obfunc rdwmf(){ local idx,jdx,hdrlines localobj nq,myf,myftmp,strf,str,strtmp,lcols
+// myf=new File() myftmp=new File() strf=new StringFunctions() str=new String() lcols=new List()
+// strtmp=new String() hdrlines=6
+// myf.ropen($s1)
+// if(!myf.is_open()){
+//  printf("rdwmf ERRA: couldn't open wmf file %s for read\n",$s1)
+//  return nil
+// }
+// for idx=0,hdrlines-1{
+//  if(myf.gets(str.s)==-1){
+//    printf("rdwmf ERRB: corrupt header\n")
+//    return nil
+//  } else if(idx==2){
+//    jdx=strf.tail(str.s,"",strtmp.s)            
+//  }
+// }
+// myf.close()
+// return nq
+// }
+
+//draw regression line
+//$o1 = nqs, $s2 = column 1, $s3 = column 2
+// or
+//$o1 = Vector 1 , $o2 = Vector 2
+//returns vo
+obfunc drawregline(){ local x0,y0,x1,y1,gvtmp,r localobj vo,nq,v1,v2,vx,vy,str
+  vo=new Vector(5)
+  if(numarg()==3){
+    nq = $o1
+    v1=new Vector()  v2=new Vector()
+    nq.getcol($s2,v1)
+    nq.getcol($s3,v2)
+  } else {
+    v1=$o1 v2=$o2
+  }
+  v1.vstats(v2,vo)
+  x0 = v2.min
+  y0 = x0*vo.x(0)+vo.x(1)
+  x1 = v2.max
+  y1 = x1*vo.x(0)+vo.x(1)
+  vx=new Vector(2)
+  vx.x(0)=x0
+  vx.x(1)=x1
+  vy=new Vector(2)
+  vy.x(0)=y0
+  vy.x(1)=y1
+  gvtmp=gvmarkflag
+  gvmarkflag=0
+  gg(vy,vx)
+  gvmarkflag=gvtmp
+  str=new String()
+  r=v1.pcorrel(v2)
+  if(name_declared("rpval_stats")){
+    sprint(str.s,"r = %.2f, p = %g, N = %d",r,rpval_stats(v1.size,r),v1.size)
+    g.label(0,0,str.s)
+  }
+  return vo
+}
+
+// select from a vector handled as a matrix -- see matrix.mod
+halfmat=0
+obfunc mindsel () { local a,x,r,c localobj vm,vi,oq
+  vm=$o1 
+  a=allocvecs(vi)
+  if (numarg()==4) vi.indvwhere(vm,$s2,$3,$4) else vi.indvwhere(vm,$s2,$3)
+  oq=new NQS("row","col","val") 
+  oq.clear(vi.size)
+  for vtr(&x,vi) {
+    r=int(x/COLS) c=x-r*COLS
+    if (!halfmat || c>r) oq.append(r,c,vm.x[x])
+  }
+  dealloc(a)
+  print oq.size(1)
+  return oq
+}
+
+//* return row $2 of nqs $o1 
+obfunc nqrow () { local row,col localobj vout,nq
+  nq=$o1
+  row=$2
+  vout=new Vector(nq.m)
+  for col=0,nq.m-1 vout.x(col)=nq.v[col].x(row)
+  return vout
+}
+
+//* find row $o2 (vector) in $o1 (nqs) and return index
+//  if not there return -1
+func nqfindrow () { local idx,jdx,sz localobj nq,vf,vrow
+  nq=$o1  vf=$o2
+  sz=nq.size(-1)
+  for idx=0,sz-1 {
+    vrow = nqrow(nq,idx)
+    if(vrow.eq(vf)) return idx
+  }
+  return -1
+}
+
+//* nquniq(NQS) -- return a new NQS with unique rows in $o1
+obfunc nquniq () { local sz,idx,outrow,jdx localobj nqin,nqout,vrow
+  nqin=$o1
+  nqout=new NQS()
+  for idx=0,nqin.m-1{
+    nqout.resize(nqin.s[idx].s)
+    nqout.v[nqout.m-1].resize(nqin.v[idx].size)
+  }
+  sz=nqin.size(-1)
+  jdx=0
+  outrow=0
+  for idx=0,sz-1{
+    vrow=nqrow(nqin,idx)
+    if(nqfindrow(nqout,vrow)==-1){
+      for jdx=0,nqin.m-1 nqout.v[jdx].x(outrow) = vrow.x(jdx)
+      outrow += 1
+    }
+  }
+  for idx=0,nqout.m-1 nqout.v[idx].resize(outrow)
+  return nqout
+}

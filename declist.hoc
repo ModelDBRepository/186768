@@ -1,0 +1,949 @@
+// $Id: declist.hoc,v 1.157 2010/12/07 14:19:28 billl Exp $
+
+//* Declarations
+strdef mchnms
+objref tmplist,tmplist2,tmpobj,aa,XO,YO
+if (! name_declared("datestr")) load_file("setup.hoc")
+tmplist = new List()
+proc declist() {}
+
+//* Templates
+//** template String2
+begintemplate String2
+public s,t,x,append,prepend,exec,tinit
+strdef s,t
+proc init() {
+  if (numarg() == 1) { s=$s1 }
+  if (numarg() == 2) { s=$s1 t=$s2 }
+  if (numarg() == 3) { s=$s1 t=$s2 x=$3 }
+}
+proc append () { local i
+  if (argtype(1)==2) sprint(t,"%s%s",s,$s1)
+  for i=2,numarg() sprint(t,"%s%s",t,$si)
+}
+proc prepend () { local i
+  if (argtype(1)==2) sprint(t,"%s%s",$s1,s)
+  for i=2,numarg() sprint(t,"%s%s",$si,t)
+}
+proc exec () {
+  if (numarg()==1) sprint(t,"%s%s",$s1,s)
+  execute(t)
+}
+proc tinit() { t=$s1 }
+
+endtemplate String2
+
+//** template DBL
+begintemplate DBL
+  public x
+  proc init () { if (numarg()==1) x=$1 else x=0 }
+endtemplate DBL
+
+//** template Union
+// USAGE: XO=new Union(val) where val can be a number string or object
+//        XO=new Union(list,index) will pick up a string or object from list
+//        XO=new Union(vec,index)  will pick up a number from vector
+//        XO=new Union(&dbl,index) will pick up a number from double array
+// Union allows storage of a double, string or object
+// 2 ways of storing strings: directly in XO.s (t,u,v) OR 
+//   using XO.set("NAME","STR") which is returned by XO.get("NAME").s
+// It is useful as a localobj in an obfunc since it will permit returning anything
+// It also makes it easy to pick up any kind of value out of a list, vector or array
+// declared() not yet declared
+if (!name_declared("isobj")) execute1("func isobj(){return 0}") // place holder
+if (!name_declared("isassigned")) execute1("func isassigned(){return 0}") // place holder
+if (!name_declared("llist")) execute1("proc llist(){}") // place holder
+begintemplate Union
+public ty,x,s,t,u,v,o,xptr,xg,xs,optr,og,os,get,set,xl,ol,fi,inc,list,err,pr,sz
+strdef s,t,u,v,tstr
+objref o[10],xl,ol,this,xo
+double x[10],sz[1],err[1]
+external sfunc,isobj,isassigned,nil,DBL,llist
+// 1arg -- store a num, string or obj
+// 2arg -- pick up type out of list
+proc init () { local ii,i,ox,xx,sx,flag
+  ox=xx=sx=0 ty=argtype(1) // 'type' of Union defined by 1st arg on creation
+  sz=10 // 10 is default size of arrays; for ii=0,sz-1 
+  for ii=0,sz-1 x[ii]=ERR
+  // special case of number in a vector or something in a list -- 2 args: list or vec,index
+  err=1 flag=0
+  if (numarg()/2==int(numarg()/2)) for (i=1;i<numarg();i+=2) {
+    if (argtype(i)!=2 || argtype(i+1)==2) break
+    flag=1
+  }
+  if (flag) { // "name",val,etc
+    for (i=1;i<numarg();i+=1) {
+      tstr=$si i+=1 
+      if (argtype(i)==0) set(tstr,$i) else set(tstr,$oi)
+    }
+    s="" // used as temp storage only
+  } else if (argtype(1)==1 && argtype(2)==0 && argtype(3)==-1) {
+    ii=$2
+    // printf("Union WARNING: taking single element out of a Vector or List\n")
+    if (argtype(1)==1) {
+      if (isobj($o1,"Vector")) { 
+        if (ii<0 || ii>=$o1.size) {
+          printf("Union ERR: vec index (%d) out of bounds for %s\n",ii,$o1)
+          return }
+        ty=0 x=$o1.x[ii] o=$o1
+      } else if (isobj($o1,"List")) {
+        if (ii<0 || ii>=$o1.count) {
+          printf("Union ERR: list index (%d) out of bounds for %s\n",ii,$o1)
+          return }
+        if (isobj($o1.object(ii),"String")) { // will handle String2
+          ty=2 s=$o1.object(ii).s o=$o1.object(ii) x=ii
+        } else { ty=1 o=$o1.object(ii) x=ii }
+      }
+    } else if (argtype(1)==3) {
+      ty=0 x=$&1[ii] // could check - but no + bound checking possible
+    }
+  } else for i=1,numarg() {
+    ii=argtype(i)
+    if (ii==0) { 
+      if (xx<sz) { 
+        x[xx]=$i xx+=1 
+      } else printf("Only have %d doubles available so can't store %g\n",sz,$i)
+    } else if (ii==2) { 
+      if (sx==0) s=$si else if (sx==1) t=$si else if (sx==2) u=$si else if (sx==3) v=$si else {
+        printf("Only have 4 strings available so can't store %s\n",$si) }
+      sx+=1
+    } else if (ii==1) { 
+      if (ox<sz) { o[ox]=$oi ox+=1
+      } else printf("Only have %d objects available so can't store %s\n",sz,$oi)
+    } else printf("Union ERR: argtype not recognized numarg %d %d\n",i,ii)
+  }
+  err=0
+}
+
+proc pr () { print "Use Union[].list" }
+
+proc list () { local flag
+  flag=0
+  if (ol!=nil) {
+    for ii=0,sz-1 if ((! isojt(ol,ol.o(ii)))||o[ii]!=nil) {
+      if (isojt(ol,ol.o(ii))) printf("%10s\t%s\n","NO NAME", o[ii]) else {
+                              printf("%10s\t%s\n",ol.o(ii).s,o[ii]) }
+    }
+    printf("%s\n","================================") 
+    flag=1
+  }
+  if (xl!=nil) {
+    for ii=0,sz-1 if ((! isojt(xl,xl.o(ii)))||x[ii]!=ERR) {
+      if (isojt(xl,xl.o(ii))) printf("%10s\t%g\n","NO NAME", x[ii]) else {
+                              printf("%10s\t%g\n",xl.o(ii).s,x[ii]) }
+    }
+    printf("%s\n","================================") 
+    flag=1
+  }
+  if (!flag) {
+    printf("%s\nSCALARS: ","================================") 
+    for ii=0,sz-1 if (x[ii]!=ERR) printf("%d:%g ",ii,x[ii])
+    printf("\n%s\nOBJECTS: ","================================") 
+    for ii=0,sz-1 if (o[ii]!=nil) printf("%d:%s ",ii,o[ii])
+    printf("\n%s\n","================================") 
+  }
+  if (sfunc.len(s)>0) printf("%10s\t%s\n","s",s)
+  if (sfunc.len(t)>0) printf("%10s\t%s\n","t",t)
+  if (sfunc.len(u)>0) printf("%10s\t%s\n","u",u)
+  if (sfunc.len(v)>0) printf("%10s\t%s\n","v",v)
+}
+
+// full List
+obfunc newl () { localobj o
+  o=new List() 
+  for ii=0,sz-1 o.append(o)
+  return o
+} 
+proc repl () { 
+  if (isobj($o1.o($2),"String")) { $o1.o($2).s=$s3
+  } else { $o1.remove($2) $o1.insrt($2,new String($s3)) }
+}
+
+func fi () { local ii
+  fif=-1
+  for ii=0,sz-1 {
+    if ($o1.o(ii)==$o1) {
+      if (fif==-1) fif=ii // first empty slot if any
+    } else if (strcmp($o1.o(ii).s,$s2)==0) return ii
+  }
+  return ERR
+}
+// put in pointers for the x values
+func xptr () { local i,ii
+  if (numarg()>sz) {printf("More names (%d) than x items (%d) in %s:xptr\n",numarg(),sz,this) 
+    error()}
+  if (!isassigned(xl)) xl=newl()
+  for i=1,numarg() repl(xl,i-1,$si)
+  return xl.count
+}
+func optr () { local i,ii
+  if (numarg()>sz) {printf("More names %d than o items (%d) in %s:optr\n",numarg(),sz,this) error()}
+  if (!isassigned(ol)) ol=newl()
+  for i=1,numarg()  repl(ol,i-1,$si)
+  return ol.count
+}
+// xg() associative get of a num
+func xg () { local ii
+  ii=fi(xl,$s1)
+  if (ii==ERR) {printf("Union:og (num get) failed -- \"%s\" not found\n",$s1) return ERR}
+  return x[ii] 
+}
+// xg() associative get of an obj
+obfunc og () { local ii
+  ii=fi(ol,$s1)
+  if (ii==ERR) {printf("Union:og (obj get) failed -- \"%s\" not found\n",$s1) return nil}
+  return o[ii] 
+}
+// xs(index,"label",num) set a specific location using a string -- see set()
+// xs("label",num) set an existing one only
+func xs () { local ii,i
+  if (!isassigned(xl)) xl=newl()
+  if (argtype(1)==0) {
+    i=3 ii=$1 // an index
+    repl(xl,ii,$s2)
+  } else {
+    i=2 ii=fi(xl,$s1)
+    if (ii==ERR) {printf("Union:xs (num set) failed -- no %s found\n",$s1) return ERR}
+  }
+  if (argtype(i)!=0) {printf("Union:xs err -- arg %d must be object\n",i) return ERR}
+  x[ii]=$i
+  return $i
+}
+// os(index,"label",obj) set a specific location using a string -- see set()
+// os("label",obj) set an existing one only
+obfunc os () { local ii,i
+  if (!isassigned(ol)) ol=newl()
+  if (argtype(1)==0) {
+    i=3 ii=$1 // $1 is an index
+    repl(ol,ii,$s2)
+  } else {
+    i=2 ii=fi(ol,$s1)
+    if (ii==ERR) {printf("Union:os (obj set) failed -- \"%s\" not found\n",$s1) return nil}
+  }
+  if (argtype(i)!=1) {printf("Union:os err -- arg %d must be object\n",i) return nil}
+  o[ii]=$oi
+  return $oi
+}
+
+// get() get any type
+obfunc get () { local ii
+  if        ((ii=fi(ol,$s1))!=ERR) { 
+    return o[ii] 
+  } else if ((ii=fi(xl,$s1))!=ERR) { 
+    if (argtype(2)==3) { $&2=x[ii] return this } else { return new DBL(x[ii]) }
+  } else {
+    // printf("Union:get() \"%s\" not found\n",$s1) 
+    return nil // make returning nil the unique error
+  }
+}
+
+// increment or with neg decrement something
+func inc () { local n
+  if (numarg()==2) n=$2 else n=1
+  if ((ii=fi(xl,$s1))==ERR) {printf("Union:inc ERR: %s %s\n",this,$s1) return ERR}
+  return x[ii]+=n
+}
+
+// set() set any type
+func set () { local ii,i,ty,fo,fx
+  if (xl==nil) xl=newl() if (ol==nil) ol=newl()
+  for (i=1;i<numarg();i+=1) {
+    tstr=$si i+=1 
+    if ((ty=argtype(i))==0) xo=xl else if (ty==1 || ty==2) xo=ol // use String() for strings
+    ii=fi(xo,tstr)
+    if (ii==ERR) {
+      if (fif==-1) {printf("UNION:set() ERRB: %s full for type %d\n",this,ty)  return ERR}
+      repl(xo,(ii=fif),tstr)
+    }
+    if (ty==0) x[ii]=$i else if (ty==1) o[ii]=$oi else if (ty==2) { // don't use s,t,u,v
+      o[ii]=new String($si)
+    }
+  }
+  return ii
+}
+endtemplate Union
+
+//* Iterators
+//** list iterator ltr
+// usage 'for ltr(tmplist) { print XO }' :: 1 arg, assumes XO as dummy
+// usage 'for ltr(YO, tmplist) { print YO }' 2 arg, specify dummy
+// usage 'for ltr(XO, tmplist, &x) { print XO,x }' :: x is counter (else use global i1)
+// usage 'for ltr(XO, tmplist, 5) { print XO,x }' :: max; only print out 0-5
+// usage 'for ltr(XO, tmplist, 5, 7) { print XO,x }' :: print 5-7
+// usage 'for ltr(XO, tmplist, &x, 5) { print XO,x }' :: counter with max
+// usage 'for ltr(XO, tmplist, &x, 5, 7) { print XO,x }' :: counter,min,max
+iterator ltr () { local i,min,max,ifl
+  min=0 max=1e9 ifl=0 // iterator flag
+  if (numarg()==3) {
+    if (argtype(3)==3) {ifl=1 $&3=0}
+    if (argtype(3)==0) max=$3
+  } else if (numarg()==4) { 
+    if (argtype(3)==0) i1=min=$3 else {ifl=1 $&3=0}
+    max=$4 
+  } else if (numarg()==5) { 
+    $&3=min=$4 max=$5 ifl=1 
+  }
+  if (! ifl) i1=0
+  if (numarg()==1) {
+    for i = 0, $o1.count-1 {
+      XO = $o1.object(i)
+      iterator_statement
+      i1+=1
+    }
+    tmpobj=$o1
+    XO=nil
+  } else {
+    if (max==1e9) max=$o2.count()-1 else if (max<0) { min=$o2.count+max max=$o2.count-1 
+    } else if (max>$o2.count-1) max=$o2.count-1
+    for i = min, max {
+      $o1 = $o2.object(i)
+      iterator_statement
+      if (ifl) { $&3+=1 } else { i1+=1 }
+    }
+    tmpobj=$o2
+    $o1 = nil
+  }
+}
+
+//** list iterator ltrb -- backwards list iterator
+// usage 'for ltrb(tmplist) { print XO }' :: 1 arg, assumes XO as dummy
+// usage 'for ltrb(YO, tmplist) { print YO }' 2 arg, specify dummy
+// usage 'for ltrb(XO, tmplist, &x) { print XO,x }' :: 3 args, define counter (else i1 default)
+//                                                 :: note that x, i1 must be defined
+iterator ltrb () { local i
+  if (numarg()==1) {
+    i1=$o1.count-1
+    for (i=$o1.count()-1;i>=0;i-=1) {
+      XO = $o1.object(i)
+      iterator_statement
+      i1-=1
+    }
+    tmpobj=$o1 XO=nil
+  } else {
+    if (numarg()==3) $&3=$o2.count-1 else i1=$o2.count-1
+    for (i=$o2.count()-1;i>=0;i-=1) {
+      $o1 = $o2.object(i)
+      iterator_statement
+      if (numarg()==3) { $&3-=1 } else { i1-=1 }
+    }
+    tmpobj=$o2
+    $o1 = nil
+  }
+}
+
+//** list iterator ltr2
+// usage 'for ltr2(XO, YO, list1, list2) { print XO,YO }'
+iterator ltr2() { local i,cnt
+  if (numarg()==5) $&5=0 else i1=0
+  cnt=$o4.count
+  if ($o3.count != $o4.count) { print "ltr2 WARNING: lists have different lengths" 
+    if ($o3.count<$o4.count) cnt=$o3.count }
+  for i = 0, cnt-1 {
+    $o1 = $o3.object(i)
+    $o2 = $o4.object(i)
+    iterator_statement
+    if (numarg()==5) { $&5+=1 } else { i1+=1 }
+  }
+  $o1=nil $o2=nil
+}
+
+//** list pairwise iterator ltrp
+// usage 'for ltrp(XO, YO, list) { print XO,YO }' takes them pairwise
+iterator ltrp() { local i
+  if (numarg()==4) {$&4=0} else {i1 = 0}
+  for (i=0;i<$o3.count()-1;i+=2) {
+    $o1 = $o3.object(i) $o2 = $o3.object(i+1)
+    iterator_statement
+    if (numarg()==4) { $&4+=1 } else { i1+=1 }
+  }
+  $o1=nil $o2=nil
+}
+
+//** list iterator sltr
+// usage 'for sltr(XO, string) { print XO }'
+iterator sltr() { local i
+  tmplist = new List($s2)
+  if (numarg()==3) {$&3=0} else {i1=0}
+  for i = 0, tmplist.count() - 1 {
+    $o1 = tmplist.object(i)
+    iterator_statement
+    if (numarg()==3) { $&3+=1 } else { i1+=1 }
+  }
+  $o1 = nil
+}
+
+//* Procedures
+//** append(LIST,o1,o2,...) -- like revec() makes a list of objects
+proc append () { local i,max
+  if (!isassigned($o1)) $o1=new List()
+  max=numarg()
+  if (argtype(max)==0) {max-=1 $o1.remove_all}
+  for i=2,max $o1.append($oi)
+}
+
+//** rcshead([flag])
+// with flag does head from archive
+func rcshead () { local x,flag localobj st
+  x=-1 flag=0
+  st=new String2()
+  if (numarg()==2) {
+    st=dirname($s1)
+    sprint(st.t,"%sRCS/%s,v",st.s,st.t)
+    flag=1
+  } else st.t=$s1
+  sprint(st.s,"head -1 %s",st.t)
+  system(st.s,st.s)
+  if (flag) sscanf(st.s,"head\t1.%d",&x) else sscanf(st.s,"%*[^,],v 1.%d",&x)
+  return x
+}
+
+//** getenv()
+obfunc getenv () { localobj st
+  st=new String()
+  sprint(st.s,"echo $%s",$s1)
+  system(st.s,st.s)
+  sfunc.left(st.s,sfunc.len(st.s)-1)
+  if (numarg()==2) $s2=st.s
+  return st
+}
+
+//** rcsopen(file,vers[,flag])  -- version open, flag to do load_file
+// rcsopen(file,vers,proc_name)  -- just load the single proc or func from that vers
+//  rcsopen("nqsnet.hoc,43,network.hoc,17,params.hoc,842,run.hoc,241") will open several files
+func rcsopen () { local a,vers,ii,x,ret localobj st,fn,v1,o,xo
+  st=new String2()   ret=1
+  if (argtype(1)==2) st.s=$s1 else st.s=$o1.s
+  // open network.hoc,params.hoc,run.hoc files for "#.#.#" 
+  if (strm(st.s,"^[^,]+,[^,]+,[^,]+,[^,]+")) {
+    a=allocvecs(v1)  o=new List()
+    split(st.s,o)
+    for (ii=1;ii<o.count;ii+=2) v1.append(str2num(o.o(ii).s))
+    if (o.count!=v1.size*2) { printf("rcsopen() discrepency: ") vlk(v1) llist(o) dealloc(a) 
+      return 0 }
+    for ltr(xo,o,&x) if (x%2==0) { // every other
+      printf("Opening %s%d\n",xo.s,v1.x[x/2])
+      if (!rcsopen(xo.s,v1.x[x/2])) { dealloc(a) ret=0 }
+    }
+    dealloc(a)
+    return ret
+  }
+  if (numarg()>1) vers=$2 else vers=0
+  if (! vers) vers=rcshead(st.s,1) // vers=0 means get latest version
+  // do checkout
+  fn=filname(st.s)
+  sprint(st.t,"RCS/%s,v",st.s)
+  if (sfunc.len(fn.t)>0) {
+    sprint(st.t,"%sRCS/%s,v",fn.t,fn.s)
+    print st.s,"::",st.t,"::",fn.s,"::",fn.t
+  } else if (fexists(st.t)) {
+    if (rcshead(st.s)!=vers) {
+      sprint(st.t,"cp -f %s %s.OLD",st.s,st.s)   system(st.t)
+      sprint(st.t,"co -f -r1.%d %s",vers,st.s)   system(st.t)
+    }
+  } else { // look for file in remote location
+    getenv("SITE",st.t)
+    sprint(st.t,"%s/nrniv/local/hoc/%s",st.t,st.s)
+    if (! fexists(st.t)) {printf("Can't find %s\n",st.t) return 0}
+    sprint(st.s,"%s%d",st.s,vers)
+    printf("Found %s at %s -> %s\n",$s1,st.t,st.s)
+    sprint(st.t,"co -f -p1.%d %s > %s",vers,st.t,st.s) system(st.t)
+  }
+  if (numarg()>2) {
+    if (argtype(3)==0) {  // 3rd arg 1 means do load_file statt xopen
+      if ($3) { 
+        load_file(st.s)
+        return 1
+      } else return 1 // 3rd arg 0 does co but no open
+    } else { // 3rd arg string means locate a single proc, iter etc.
+      sprint(st.s,"hocproc %s %s %s",st.s,$s3,".tmp")
+      system(st.s,st.t)
+      if (strm(st.t,"ERROR")) return 0 else {
+        printf("Loading '%s()' from %s%d (via .tmp)\n",$s3,$s1,vers)
+        xopen(".tmp")
+        return 1
+      } 
+    }
+  }
+  xopen(st.s)
+  return 1
+}
+
+//** simopen()
+proc simopen () { local x localobj o,xo
+  o=new List()
+  if (numarg()==1) split(allfiles,o) else split(simfiles,o)
+  for ltr(xo,o,&x) xopen(xo.s)
+}
+
+//** pxopen(FILE) prints out the version before opening a file
+proc pxopen () { local flag localobj o
+  flag=1
+  o=new List("ParallelContext")
+  if (o.count>0) if (o.o(0).id!=0) flag=0
+  if (flag) printf("%s version %d\n",$s1,rcshead($s1))
+  xopen($s1)
+}
+
+//** lrm(LIST,STR) will remove item with string from LIST
+proc lrm () { local cnt
+  cnt=0
+  if (argtype(2)==2) {
+    for ltrb(XO,$o1) if (strm(XO.s,$s2)) { $o1.remove(i1) cnt+=1 }
+    printf("%s found %d time\n",$s2,cnt)
+  } else {
+    $o1.remove($o1.index($o2))
+  }
+}
+
+//** lcnt(LIST,STR) will count item with string in LIST
+func lcnt () { local cnt localobj xo
+  cnt=0
+  for ltr(xo,$o1) if (strm(xo.s,$s2)) cnt+=1
+  return cnt
+}
+
+//** lrepl(LIST,#,OBJ) will replace item at location # with OBJ
+proc lrepl () { $o1.remove($2) $o1.insrt($2,$o3) }
+
+//** lswap(list,#1,#2) swap items on a list
+proc lswap () { local a,b
+  if ($2<$3) {a=$2 b=$3} else {a=$3 b=$2}
+  $o1.insrt(a,$o1.object(b))
+  $o1.remove(b+1)
+  $o1.insrt(b+1,$o1.object(a+1))
+  $o1.remove(a+1)
+}
+
+//** proc shl() show a list
+proc shl () { 
+  if (numarg()==1) tmpobj=$o1 else tmpobj=tmplist 
+  if (tmpobj.count==0) return
+  if (isstring(tmpobj.object(0),tstr)) {
+    for ltr(XO,tmpobj) print XO.s
+  } else for ltr(XO,tmpobj) print XO
+}
+
+//** lfu() = ltr follow-up, pick out a single item from the last ltr request
+// lfu(list,num[,obj])
+proc lfu () { 
+  if (numarg()==1) { 
+    if (argtype(1)==0) XO=tmpobj.object($1)
+    if (argtype(1)==1) tmpobj=$o1
+  }
+  if (numarg()==2) {
+    if (argtype(1)==1 && argtype(2)==0) {tmpobj=$o1 XO=$o1.object($2)}
+    if (argtype(1)==0 && argtype(2)==1) {$o2=tmpobj.object($1)}
+  }
+  if (numarg()==3) {
+    if (argtype(1)==1 && argtype(2)==0 && argtype(3)==1) { tmpobj=$o1 $o3=$o1.object($2) }
+  }
+  if (numarg()==4) {
+    $o2=tmpobj.object($1)  $o4=tmpobj.object($3) 
+  }
+}
+
+//** listedit() allows you to remove things by clicking
+proc listedit () {
+  if (numarg()==0) { print "listedit(list,str) gives browser(list,str) for removing items" return}
+  if (numarg()==1) {
+  if (! isstring($o1.object(0),temp_string_)) {print "Give name for string of object?" return }
+    sprint(temp_string_,"proc ledt1 () {sprint(temp_string_,%s,hoc_ac_,%s.object(hoc_ac_).%s)}","\"%d:%s\"",$o1,"s")
+  } else {
+    sprint(temp_string_,"proc ledt1 () {sprint(temp_string_,%s,hoc_ac_,%s.object(hoc_ac_).%s)}","\"%d:%s\"",$o1,$s2)
+  }
+  execute1(temp_string_)
+  $o1.browser("Double click to remove",temp_string_,"ledt1()")
+  sprint(temp_string_,"%s.remove(hoc_ac_)",$o1)
+  $o1.accept_action(temp_string_)
+}
+
+//** crac() create and access
+proc crac () {
+  execute("create acell_home_")
+  execute("access acell_home_")
+}
+
+//** listXO() connects stuff to XO from a list
+proc listXO () {
+  if (numarg()==1) {
+    $o1.browser("Double click")
+    sprint(temp_string_,"print hoc_ac_,\":XO -> \",%s.object(hoc_ac_) XO = %s.object(hoc_ac_)",$o1,$o1)
+    $o1.accept_action(temp_string_)
+  } else if (numarg()==2) {
+    $o1.browser($s2)
+    sprint(temp_string_,"XO = %s.object(hoc_ac_) print %s.object(hoc_ac_).%s",$o1,$o1,$s2)
+    $o1.accept_action(temp_string_)
+  } else if (numarg()==3) {
+    $o1.browser($s2)
+    sprint(temp_string_,"XO = %s.object(hoc_ac_) print %s.object(hoc_ac_).%s,%s.object(hoc_ac_).%s",$o1,$o1,$s2,$o1,$s3)
+    $o1.accept_action(temp_string_)
+  }
+}
+
+//** lcatstr(list,s1,s2,...) make new List("s1") new List("s2") ... in one list
+proc lcatstr() { local i
+  if (numarg()<3) { print "lcatstr(l1,s1,s2,...) puts new Lists into l1" return }
+  $o1 = new List($s2)
+  for i=3,numarg() {
+    tmplist2 = new List($si)
+    for ltr(XO,tmplist2) { $o1.append(XO) }  
+  }
+}
+
+//** sublist() places a sublist in LIST0 from LIST1 index BEGIN to END inclusive
+proc sublist () { local ii
+  $o1.remove_all
+  for ii=$3,$4 {
+    $o1.append($o2.object(ii))
+  }
+}
+
+//* catlist() concats LIST2...LISTN on end of LIST1
+proc catlist () { local i
+  for i = 2, numarg() {
+    for ltr(YO,$oi) {
+      $o1.append(YO)
+    }
+  }
+}  
+
+//* mechlist() creates a LIST of all this CELL type's TEMPLATE type
+// list, cell, template
+// make a list of mechanisms belonging to a certain template
+proc mechlist () { local num,ii
+//  mchnms = ""  // not a good storage since runs out of room
+  if (numarg()==0) { print "mechlist(list, cell, template)" return}
+  $o1 = new List($s2)
+  num = $o1.count
+  for ii=0,num-1 {
+    sprint(temp_string_,"%s.append(%s.%s)",$o1,$o1.object(ii),$s3)
+    execute(temp_string_)
+    sprint(mchnms,"%s/%d/%s.%s",mchnms,ii,$o1.object(ii),$s3)
+  }
+  for (ii=num-1;ii>=0;ii=ii-1) { $o1.remove(ii) }
+}
+
+//* lp() loop through a list running command in object's context
+// assumes list in tmplist
+// with 1 args run $o1.object().obj_elem
+// with 2 args run comm($o1.object().obj_elem)
+proc lp () {
+  for ii=0,tmplist.count-1 {
+    printf("%s ",tmplist.object(ii))
+    if (numarg()==2) {
+      sprint(temp_string_,"%s(%s.%s)",$s2,tmplist.object(ii),$s1)
+    } else {
+      sprint(temp_string_,"%s.%s",tmplist.object(ii),$s1)
+    }
+    execute(temp_string_)
+  }
+}
+
+//* prlp() loop through a list printing object name and result of command
+proc prlp () {
+  tmpobj=tmplist
+  if (numarg()>0) if (argtype(1)==1) tmpobj=$o1
+  for ltr(XO,tmpobj) {
+    printf("%d %s ",i1,XO)
+    if (numarg()>1) {
+      sprint(temp_string_,"print %s.%s",XO,$s2)
+      execute(temp_string_)
+    } else { print "" }
+  }
+}
+
+//* String functions
+//** repl_str(str,stra,strb): replace stra with strb in string
+// will only replace first string match
+proc repl_str() { localobj scr
+  scr=new String()
+  if (sfunc.head($s1,$s2,scr.s) == -1) { print $s2," not in ",$s1  return }
+  sfunc.tail($s1,$s2,scr.s)
+  sprint(scr.s,"%s%s",$s3,scr.s)
+  sfunc.head($s1,$s2,$s1)
+  sprint($s1,"%s%s",$s1,scr.s)
+}
+
+//** find_str(str,left,right): pull out dest flanked by left and right
+obfunc find_str() { localobj st
+  st=new String2()
+  if (sfunc.tail($s1,$s2,st.t) == -1) { print $s2," not in ",$s1  return }
+  sfunc.head(st.t,$s3,st.s)
+  return st
+}
+
+//** find_num(str,left,right): pull out number flanked by left and right
+func find_num() { local x localobj st
+  st=new String()
+  if (sfunc.tail($s1,$s2,st.s) == -1) { print $s2," not in ",$s1  return }
+  sfunc.head(st.s,$s3,st.s)
+  sscanf(st.s,"%g",&x)
+  return x
+}
+
+//** repl_mstr(str,stra,strb): replace stra with strb in string
+// multiple replace
+proc repl_mstr () { localobj scr
+  scr=new String()
+  while (sfunc.head($s1,$s2,scr.s) != -1) {
+    sfunc.tail($s1,$s2,scr.s)
+    sprint(scr.s,"%s%s",$s3,scr.s)
+    sfunc.head($s1,$s2,$s1)
+    sprint($s1,"%s%s",$s1,scr.s)
+  }
+}
+
+//** extract(str,stra,strb[,dest]): pull out piece of string surrounded by stra,strb
+obfunc str_extract() { local b,e,err localobj scr
+  scr=new String2() err=0
+  b=sfunc.tail($s1,$s2,scr.s) // scr.s contains after s2
+  if (b==-1){printf("%s not found in %s\n",$s2,$s1) err=1}
+  e=sfunc.head(scr.s,$s3,scr.t) // beg of s3
+  if (e==-1){printf("%s not found in %s\n",$s3,scr.s) err=1}
+  if (err) scr.s="" else sfunc.left(scr.s,e)
+  if (numarg()==4) $s4=scr.s
+  return scr
+}
+
+//** clean_str(str,scratch,s1,s2,s3,...)
+// remove serial $si from string
+proc clean_str () { local i
+  for i=3,numarg() {
+    while (sfunc.head($s1,$si,$s2) != -1) { 
+      sfunc.tail($s1,$si,$s2)
+      sfunc.head($s1,$si,$s1)
+      sprint($s1,"%s%s",$s1,$s2)      
+    }
+  }
+}
+
+//** aaaa() (or $o2) becomes a list of strings from file $s1
+proc aaaa () { local flag
+  if (numarg()==2) { tmpfile.ropen($s1) aa=$o2 flag=0
+  } else if (numarg()==1) { tmpfile.ropen($s1) flag=1
+  } else { tmpfile.ropen("aa") flag=1 }
+  if (flag==1) if (isobj(aa,"List")) { aa.remove_all() } else { aa=new List() }
+  while (tmpfile.gets(temp_string_)>0) {
+    chop(temp_string_)
+    tmpobj=new String(temp_string_)
+    aa.append(tmpobj)
+  }
+  tmpobj=nil
+}
+
+//* Object identification
+//** objid() find information about object -- replaces var2obj, canobj, objnum
+obfunc objid () { local flag localobj xo
+  xo=new Union()
+  if (argtype(1)==1) sprint(xo.s,"tmpobj=%s",$o1) else sprint(xo.s,"tmpobj=%s",$s1)
+  execute(xo.s) // change variable name to object name
+  xo.o=tmpobj
+  sprint(xo.s,"%s",xo.o)
+  sscanf(xo.s,"%*[^[][%d]",&xo.x)
+  return xo
+}
+
+//** var2obj() and canobj() -- find true object names
+// var2obj("tstr"[,"objvar"]) replaces variable name with actual name of the object
+// default into XO; optional second arg allows to place somewhere else
+// eg tstr="TC[0].ampa" var2obj(tstr) -> AMPA[0]
+proc var2obj () { local flag
+  if (numarg()==1) flag=1 else flag=0
+  if (flag) sprint($s1,"XO=%s",$s1) else sprint($s1,"%s=%s",$s2,$s1)
+  execute($s1) // change variable name to object name
+  if (flag) sprint($s1,"%s",XO) else sprint($s1,"%s",$s2)
+  printf("var2obj() PLEASE REPLACE WITH objid()\n") 
+}
+
+//** objnum(OBJ) -- find object number
+func objnum () { local x localobj st
+  st=new String()
+  if (argtype(1)==1) sprint(st.s,"%s",$o1) else st.s=$s1
+  if (sscanf(st.s,"%*[^[][%d]",&x) != 1) x=-1
+  return x
+}
+
+proc allobjs () {
+  hoc_stdout($s1)
+  allobjects()
+  hoc_stdout()
+}
+
+//** strnum(str,"PRE") -- pull number out of a string
+func strnum () { local x localobj st
+  st=new String2($s1)
+  sfunc.tail(st.s,$s2,st.t)
+  if (sscanf(st.t,"%d",&x) != 1) x=-99e99
+  return x
+}
+
+//** canobj(obj[,"OBJVAR"]) -- default will assign to XO
+// canonical object -- return canonical identity for an object
+// eg canobj(tc,"YO") -- figure out what tc is and assign it to YO
+proc canobj () { local flag
+  if (numarg()==1) flag=1 else flag=0
+  if (flag) sprint(tstr,"XO=%s",$o1) else sprint(tstr,"%s=%s",$s2,$o1)
+  execute(tstr) // change variable name to object name
+  sprint(tstr,"%s",$o1)
+  printf("canobj() PLEASE REPLACE WITH objid()\n") 
+}
+
+//* push() and pop() for objects -- returns
+proc push () { local i
+  for i=2,numarg() $o1.append($oi)
+}
+
+//** pop()
+obfunc pop () { local i,cnt localobj o
+  cnt=$o1.count-1
+  if (cnt==-1) { print "ERR: unable to pop" return } 
+  o=$o1.object(cnt)
+  $o1.remove(cnt)
+  return o
+}
+
+//* time()
+strdef tmstr
+tmstr="run()"
+func time () { local tti,uintmax,cps
+  uintmax=4294967295 // UINT_MAX/CLOCKS_PER_SEC
+  cps=1e6 // CLOCKS_PER_SEC
+  tti=prtime()
+  system("date")
+  if (numarg()==1) execute1($s1) else execute1(tmstr)
+  tti=prtime()-tti
+  if (tti<0) tti+=uintmax
+  if (tti<cps) {           print tti/1e3,       "kilocycles" 
+  } else if (tti<60*cps) { print tti/cps,   "s" 
+  } else                   print tti/cps/60,"m"
+  system("date")
+  return tti/1e3
+}
+
+func ftime () { local tti
+  prtime()
+  if (numarg()==1) execute($s1) else execute(tmstr)
+  tti=prtime()
+  return tti
+}
+
+proc setdate () {
+  system("date +%y%b%d",datestr)
+  chop(datestr)
+  downcase(datestr)
+}
+
+proc sortlist () { local a,err,ii,x,rev,na localobj v1,v2,xo,nl,il
+  il=$o1
+  err=rev=0
+  na=numarg()
+  for ii=2,3 if (na>=ii) if (argtype(ii)==0) rev=1
+  a=allocvecs(v1,v2,il.count)
+  nl=new List()
+  if (!name_declared("oform")) err=1
+  if (!err) if (oform(v1)==NOP) err=1
+  if (err) {printf("sortlist uses oform()\n") error()}
+  for ltr(xo,il) v1.append(oform(xo))
+  v1.sortindex(v2)
+  if (rev) v2.reverse
+  for ii=0,v2.size-1 nl.append(il.o(v2.x[ii]))
+  if ((na==2 && !rev) || na==3) $o2=nl else {
+    il.remove_all
+    for ltr(xo,nl) il.append(xo)
+  }
+  dealloc(a)
+}
+
+func assoc () { local i,ty,ii localobj xo
+  // object_push(xo) ty=name_declared("s",1) object_pop() // strdef:4, dbl:5
+  for ltr(xo,$o2,&ii) {
+    if (argtype(1)==2) {
+      if (strcmp(xo.s,$s1)==0) break
+    } else if (argtype(1)==0) {
+      if (xo.x==$1) break
+    }
+  }
+  if ($o2.count==ii) return -1 else return ii
+}
+
+// assoco() like assoc but returns the object instead of the index
+obfunc assoco () { local i,ty,ii localobj xo
+  // object_push(xo) ty=name_declared("s",1) object_pop() // strdef:4, dbl:5
+  for ltr(xo,$o2,&ii) {
+    if (argtype(1)==2) {
+      if (strcmp(xo.s,$s1)==0) break
+    } else if (argtype(1)==0) {
+      if (xo.x==$1) break
+    }
+  }
+  if ($o2.count==ii) return nil else return xo
+}
+
+// excu() does the associative search and executes the resultant string 
+// eg excu("key",list) excu("key",list,"arg1"[,"arg2","arg3"...]) 
+func excu () { local i,ty,ii localobj xo,o,st
+  o=$o2
+  // object_push(xo) ty=name_declared("s",1) object_pop() // strdef:4, dbl:5
+  for ltr(xo,o,&ii) {
+    if (argtype(1)==2) {
+      if (strcmp(xo.s,$s1)==0) break
+    } else if (argtype(1)==0) {
+      if (xo.x==$1) break
+    }
+  }
+  if (o.count!=ii) {
+    if (sfunc.len(xo.t)==0) return 0 // empty string
+    st=strcat(st,"hoc_ac_=",xo.t,"(")
+    if (numarg()>2) { 
+      for i=3,numarg() {
+        if (argtype(i)==2) { sprint(st.s,"%s%s,",st.s,$si)
+        } else if (argtype(i)==0) { sprint(st.s,"%s%g,",st.s,$i)
+        } else if (argtype(i)==1) { sprint(st.s,"%s%s,",st.s,$oi) }
+      }
+      chop(st.s)
+    }
+    strcat(st,")")
+    execute(st.s)    // print st.s
+    return hoc_ac_
+  } else return 0
+}
+
+// LAR: list_array is list used as an array
+begintemplate LAR
+public l,set,x,size,nil,resize,get,lt
+objref l,nil
+double size[1]
+
+proc init () { local ii
+  size=$1
+  l=new List()
+  for ii=0,size-1 l.append(l) // place holder
+}
+
+func set () { local ix
+  ix=$1
+  if (ix>=size) {printf("LAR set OOR %d>=%d\n",ix,size) return -1}
+  l.remove(ix) l.insrt(ix,$o2) 
+  return ix
+}
+
+obfunc x ()   { if (eqojt(l,l.o($1))) return nil else return l.o($1) }
+obfunc get () { if (eqojt(l,l.o($1))) return nil else return l.o($1) }
+
+proc resize () { local newsz,ii
+  newsz=$1
+  if (newsz<size) {
+    for (ii=size-1;ii>=newsz;ii-=1) l.remove(ii)
+  } else if (newsz>size) {
+    for ii=size,newsz-1 l.append(l)
+  }
+  size=newsz
+}
+
+iterator lt () { local ii
+  for ii=0,size-1 if (!eqojt(l,l.o(ii))) { 
+    $o1=l.o(ii)
+    iterator_statement
+  }
+}
+endtemplate LAR

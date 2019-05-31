@@ -1,0 +1,121 @@
+// $Id: stats.hoc,v 1.3 2008/12/22 03:50:27 samn Exp $ 
+
+
+//based on code from:
+//http://pdos.csail.mit.edu/grid/sim/capacity-ns.tgz/capacity-sim/new-ns/
+//hoc template that allows sampling from a pareto power law distribution 
+//specified with objref rd
+//rd = new rdmpareto($1=avg,$2=shape,[$3=seed])
+//then picking values with .pick , or assigning to a vec with assignv(vec)
+begintemplate rdmpareto
+public avg,shape,rd,seed,pick,repick,paretoc,pareto5,assignv,reset,pareto4,pareto3
+double avg[1],shape[1],seed[1]
+objref rd
+proc init () {
+  avg=$1 shape=$2
+  if(numarg()>2)seed=$3 else seed=1234
+  rd=new Random()
+  rd.ACG(seed)
+}
+proc reset () {
+  rd.ACG(seed)
+}
+func paretoc () { local scale,shape,U
+  scale=$1 shape=$2 U = rd.uniform(0,1)
+  return scale * (1.0/ U^(1/shape) )
+}
+func pareto5 () { local avg,shape
+  avg=$1 shape=$2
+  return paretoc( avg * (shape -1)/shape, shape)
+}
+func pareto4 () { local alpha,u
+  alpha=$2
+  u = 1 - rd.uniform(0,1)
+  return $1 + 1 / u^(1/alpha)
+}
+func pareto3 () { local x,z,b,a
+  b = avg // 1 //min value
+  a = shape // 10
+  x = rd.uniform(0,1)
+  z = x^-1/a
+  return 1 + b * z
+}
+func pick () {
+  return pareto5(avg,shape)
+}
+func repick () {
+  return pick()
+}
+func assignv () { local i localobj vi
+  vi=$o1 
+  for i=0,vi.size-1 vi.x(i)=pick()
+}
+endtemplate rdmpareto
+
+func skew () { local a,ret localobj v1
+  a=allocvecs(v1)
+  $o1.getcol($s2).moment(v1)
+  ret=v1.x[4]
+  dealloc(a)
+  return ret
+}
+
+func skewv () { localobj v1
+  v1=new Vector(5)
+  $o1.moment(v1)
+  return v1.x(4)
+}
+
+
+//** test rsampsig
+objref vIN0,vIN1,vhsout,myrdm,vrs,VA
+R0SZ=30000//size of group 0
+R1SZ=30000//size of group 1
+RPRC=100 // # of trials (combinations)
+RS0M=0 //mean of group 0
+RS1M=0 //mean of group 1
+RS0SD=1 //sdev of group 0
+RS1SD=1 //sdev of group 1
+proc rsi () {
+  if(myrdm==nil) myrdm=new Random()  
+  {myrdm.normal(RS0M,RS0SD) vIN0=new Vector(R0SZ) vIN0.setrand(myrdm)}  
+  {myrdm.normal(RS1M,RS1SD) vIN1=new Vector(R1SZ) vIN1.setrand(myrdm)}
+  vhsout=new Vector(vIN0.size+vIN1.size)
+  if(RPRC>1){
+    vrs=new Vector(RPRC)
+  } else {
+    vrs=new Vector(combs_stats(R0SZ+R1SZ,mmax(R0SZ,R1SZ))*RPRC)
+  }
+  VA=new Vector()  VA.copy(vIN0) VA.append(vIN1)
+}
+func hocmeasure () {
+  hretval_stats=vhsout.mean
+  return vhsout.mean
+}
+func compfunc () {
+  if(verbose_stats>1) printf("$1=%g,$2=%g\n",$1,$2)
+  hretval_stats=$1-$2
+  return hretval_stats
+}
+onesided=0
+nocmbchk=1
+pval=tval=0
+func testrs () { local dd localobj str
+  if(numarg()>0)dd=$1 else dd=1
+  str=new String()
+  rsi()
+  vhsout.resize(vIN0.size+vIN1.size)
+  pval=vrs.rsampsig(vIN0,vIN1,RPRC,"hocmeasure","compfunc",vhsout,onesided,nocmbchk)
+  tval=ttest(vIN0,vIN1)
+  if(dd){
+    sprint(str.s,"p(abs(m0-m1))>%g=%g, t=%g, e=%g",abs(vIN0.mean-vIN1.mean),pval,tval,abs(pval-tval)/tval)
+    {ge() ers=0 clr=1 hist(g,VA) clr=2  hist(g,vIN0) clr=3  hist(g,vIN1) g.label(0,0.95,str.s)}
+    sprint(str.s,"m0=%g, m1=%g, n0=%g, n1=%g, s0=%g, s1=%g",vIN0.mean,vIN1.mean,vIN0.size,vIN1.size,vIN0.stdev,vIN1.stdev)
+    g.label(0.0,0.0,str.s)
+    sprint(str.s,"m0-m1=%g",vIN0.mean-vIN1.mean)
+    g.label(0,0.9,str.s)
+    g.exec_menu("View = plot")
+  }
+  printf("pval=%g, tval=%g, err=%g\n",pval,tval,abs(pval-tval)/tval)
+  return pval
+}

@@ -1,0 +1,65 @@
+// $Id: default.hoc,v 1.5 2003/07/08 16:16:52 billl Exp $
+/* This file contains various global defaults for hoc
+
+** Users should not edit nrnoc.hoc or default.hoc.  Any local 
+changes to these files should be made in local.hoc.
+----------------------------------------------------------------*/
+
+/*------------------------------------------------------------
+Object defaults
+------------------------------------------------------------*/
+
+/*** Define a "nil" object ***/
+objectvar nil
+
+/*------------------------------------------------------------
+String defaults
+------------------------------------------------------------*/
+
+/*** "Section" is used if errors are found in the initializiations ***/
+strdef section
+
+/*** Misc defines used by graphic routines ***/
+temp_string_ = "t"
+tempvar = 0
+
+/*------------------------------------------------------------
+Simulation defaults
+------------------------------------------------------------*/
+
+                        /* To be consistent w/the nmodl values */
+FARADAY = 96520.        /* Hoc default = 96484.56 */
+PI      = 3.14159       /* Hoc default = 3.1415927 */
+
+                        /* 0=off, 1=on */
+print_flag  = 0         /* Write to output file */
+graph_flag  = 1         /* Plot output */
+iv_flag     = 1         /* Using Interviews plotting */
+batch_flag  = 0         /* Using batch_run() */
+compress_flag = 0       /* Compress output file when saved */
+stoprun     = 0         /* 0=running, 1=stopped */
+iv_loaded   = 0         /* Load initial iv stuff on once */
+
+init_seed   = 830529
+run_seed    = 680612
+
+t           = 0         /* msec */
+dt          = .01       /* msec */
+tstop       = 100       /* msec */
+printStep   = 0.1       /* msec */
+plotStep    = 0.1       /* msec */
+flushStep   = 0.1       /* msec */
+eventStep   = 50        /* Number of nstep's before a doEvent */
+
+secondorder = 0
+
+celsius     = 6.3       /* degC */
+
+v_init      = -70       /* (mV) */
+global_ra   = 200       /* (ohm-cm) specific axial resisitivity */
+
+/*** Ion parameters ***/
+ca_init     = 50e-6     /* mM */
+na_init     = 10        /* mM */
+k_init      = 54.4      /* mM */
+

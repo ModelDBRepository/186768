@@ -1,0 +1,1750 @@
+// $Id: decvec.hoc,v 1.424 2010/12/13 13:52:10 billl Exp $
+
+proc decvec() {}
+
+//* Declarations
+objref ind, tvec, vec, vec0, vec1, tmpvec, vrtmp, veclist, veccollect, pwm
+objref tmpobj, XO, YO, rdm, dir
+strdef filename,dblform,tabform,xtmp
+{dblform="%.4g" tabform=" "}
+
+dir = new List()
+tmpfile = new File()
+if (! name_declared("datestr")) load_file("setup.hoc")
+load_file("declist.hoc")  // declare list iterators
+print "Loading decvec"
+
+fnum=verbose=0
+{symnum = 7 colnum = 10}
+func cg () { return $1%(colnum-1)+1 } // skip white color
+objref clrsym[colnum+1]
+for ii=0,colnum { clrsym[ii]=new Union() clrsym[ii].x=ii%colnum }
+// black->red->blue->green->orange->brown->violet->yellow->grey
+{clrsym[0].s="white" clrsym[1].s="black" clrsym[2].s="red" clrsym[3].s="blue"
+clrsym[4].s="green" clrsym[5].s="orange" clrsym[6].s="brown" clrsym[7].s="violet" 
+clrsym[8].s="yellow" clrsym[9].s="grey"} 
+clrsym[0].o=new List()
+{symmax=20 symmin=2}
+obfunc sg () { local ii localobj o
+  ii=$1
+  o=clrsym[ii%(colnum-1)+1]
+  o.x=ii%(colnum-1)+1
+  o.t=clrsym[0].o.o(ii%symnum).s
+  o.x[1]=(3-ii)%4+1 // descending line types
+  o.x[2]=(symmax-symmin-2*ii)%(symmax-symmin+1)+symmin
+  o.x[3]=(4-ii)%(symmax-symmin+1)+symmin
+  o.x[4]=(int((ii+1)/5)%2+1)*4-(ii+1)%4+1 // another line type sequence
+  return o
+}
+
+{ MSONUM=100 MSOSIZ=100 msomax=0 msoptr=0 objref mso[MSONUM] }
+double x[4],y[4]
+xx=0 // declare a scalar 
+ind = new Vector(100)
+tvec = new Vector(100)
+vec = new Vector(100)
+vec0 = new Vector(10)
+vec1 = new Vector(10)
+vrtmp = new Vector(10)
+veclist = new List()
+veccollect = new List()
+rdm = new Random()
+rdm.MCellRan4()
+
+if (!(xwindows && name_declared("xwindows"))) {
+  xwindows=0
+  objref graphItem
+  strdef temp_string_, temp_string2_
+}
+
+//* stuff that doesn't belong here
+//** dired([list,]file) - put together list of files matching 'file', calls 'ls -1 file'
+//   dired([list,]file,1) file name to read for list of files
+//   dired([list,]file,2) clear dir first; if list isn't present assume 'dir'
+//   dired([list,]file,3) do recursive search
+func dired () { local f,i,f1 localobj st,o
+  f1=f=0
+  st=new String2()
+  if (numarg()==0) { print "dired([list,]filename[,flag])\t\
+    adds the filename to list (use wildcards) (flag:1 read file;flag:2 clear list)"
+    return 0 }
+  if (argtype(1)==2) {o=dir st.s=$s1 i=2} else {o=$o1 st.s=$s2 i=3}
+  while (i<=numarg()) { 
+    if (argtype(i)==2) st.t=$si else f=$i
+    i+=1
+  }
+  if (f==2 || f==3) o.remove_all
+  if (f==1) {
+    tmpfile.ropen(st.s) 
+  } else { // f!=1
+    rmxtmp()
+    if (f==3) {
+      printf("Search starting in ") system("pwd")
+      sprint(st.t,"sh -fc \"find . -name %s > %s\"",st.s,xtmp)
+    } else {
+      if (strm(st.s,"[*?]")) f1=0 else f1=1 // is this a wildcard or a directory
+      if (f1) {  
+        if (sfunc.len(st.t)>0) {
+          sprint(st.t,"find %s -name %s >> %s",st.s,st.t,xtmp)
+        } else  sprint(st.t,"find %s >> %s",st.s,xtmp)
+      } else     sprint(st.t,"ls -1R %s >> %s",st.s,xtmp)
+    }
+    system(st.t)
+    tmpfile.ropen(xtmp)
+  }
+  while (tmpfile.scanstr(st.t) != -1) {
+    if (f1) { // a directory
+      if ((x=ftype(st.t))!=2) {print "Ignoring ",st.t,x  continue}
+    }
+    o.append(new String(st.t))
+    tmpfile.gets(st.t)  // get rid of the rest of the line
+  }
+  printf("%d files in dir\n",o.count)
+  return o.count
+}
+
+// lsdir([dir])
+proc lsdir () { 
+  if (numarg()==1) {
+    for ltr($o1) {sprint(tstr,"ls -l %s",XO.s) system(tstr)}
+  } else for ltr(dir) {sprint(tstr,"ls -l %s",XO.s) system(tstr)}
+}
+
+//** lbrw(list,action) is used to put up a browser
+// note action given without '()'
+proc lbrw () {
+  $o1.browser($s2,"s")
+  sprint($s2,"%s()",$s2)
+  $o1.accept_action($s2)
+}
+
+//** l2v(S1,S2) makes a list(S1) and puts all the XO.S2 into vec
+// eg l2v("IClamp","amp")
+proc l2v () {
+  tmpobj=new List($s1)
+  if (numarg()==3) YO=$o3 else YO=vec
+  YO.resize(tmpobj.count) YO.resize(0)
+  for ltr(tmpobj) {
+    sprint(tstr,"YO.append(%s.%s)",XO,$s2)
+    execute(tstr)
+  }
+}
+
+//* vector iterator vtr
+// for vtr(vec) { print x }
+// for vtr(&x, vec) { print x }
+// for vtr(&x, vec, &y) { print x,y }
+// for vtr(&x, vec, max_ind) { print x }
+// for vtr(&x, vec, min_ind, max_ind) { print x }
+// for vtr(&x, vec, &y, min_ind, max_ind) { print x,y }
+iterator vtr () { local i,j,pf,cf,b,e localobj o
+  cf=pf=0
+  if (argtype(1)==1) { // 1st arg a vector or the pointer
+    o=$o1 i=2
+  } else if (argtype(1)==3) {
+    pf=1 o=$o2 i=3 // pointer alway in position 1
+  } 
+  b=0 e=o.size-1 // default: do whole vec
+  // now can take counter or limits
+  if (argtype(i)==3) {cf=i i+=1} // cf gives counter location
+  if (argtype(i)==0) {
+    if (argtype(i+1)==0) {b=$i i+=1 e=$i} else e=$i
+  }
+  if (!cf) i1=0 else {i=cf $&i=0} // default counter
+  for j=b,e {
+    if (pf) $&1=o.x[j] else x=o.x[j]  
+    iterator_statement 
+    if (cf) $&i+=1 else i1+=1
+  }
+}
+
+//* vector iterator vtr2, treat two vectors as pairs
+// usage 'for vtr2(&x, &y, vec1, vec2) { print x,y }'
+iterator vtr2 () { local i,pairwise,noi1
+  noi1=pairwise=0
+  if (numarg()==3) { pairwise=1 i1=0 }
+  if (numarg()==4) if (argtype(4)==3) { pairwise=1 $&4=0 noi1=1}
+  if (pairwise) if ($o3.size%2!=0) { print "vtr2 ERROR: vec not even sized." return }
+  if (! pairwise) {
+    if ($o3.size != $o4.size) { print "vtr2 ERROR: sizes differ." return }
+    if (numarg()==5) {$&5=0 noi1=1} else {i1 = 0}
+  }
+  for i = 0,$o3.size()-1 {
+    $&1 = $o3.x[i]
+    if (pairwise) $&2=$o3.x[i+=1] else $&2=$o4.x[i]
+    iterator_statement
+    if (noi1) { if (pairwise) $&4+=1 else $&5+=1 } else i1+=1
+  }
+}
+
+//** viconv(TARG,OLD_INDS,NEW_INDS)
+proc viconv () { local a,b
+  if (numarg()==0) { printf("viconv(TARG,OLD_INDS,NEW_INDS)\n") return }
+  a=b=allocvecs(2) b+=1
+  if ($o2.size!=$o3.size) {printf("OLD_INDS %d != NEW_INDS %d\n",$o2.size,$o3.size) return}
+  mso[b].resize($o1.size)
+  for vtr2(&x,&y,$o2,$o3) { // x -> y
+    mso[a].indvwhere($o1,"==",x)
+    mso[b].indset(mso[a],y)
+  }
+  $o1.copy(mso[b])
+  dealloc(a)
+}
+
+//* iterator lvtr, step through a list and a vector together
+// usage 'for lvtr(XO, &x, list, vec) { print XO,x }'
+iterator lvtr () { local i
+  if ($o3.count <  $o4.size) { printf("lvtr ERROR: vecsize > listsize: list %d,vec %d.\n",$o3.count,$o4.size) return }
+  if ($o3.count != $o4.size) { printf("lvtr WARNING: sizes differ: list %d,vec %d.\n",$o3.count,$o4.size) }
+  if (numarg()==5) {$&5=0} else {i1 = 0}
+  for i = 0, $o4.size()-1 {
+    $o1 = $o3.object(i)
+    $&2 = $o4.x[i]
+    iterator_statement
+    if (numarg()==5) { $&5+=1 } else { i1+=1 }
+  }
+}
+
+//* other iterators: case, scase, ocase
+iterator case () { local i,j,max,flag
+  if (argtype(numarg())==3) {flag=1 max=numarg()-1} else {flag=0 max=numarg()}
+  if (flag) {i=max+1 $&i=0} else i1 = 0
+  for i = 2, max {
+    $&1 = $i
+    iterator_statement
+    if (flag) {j=i i=max+1 $&i+=1 i=j} else i1+=1
+  }
+}
+
+iterator scase () { local i,j,min,max,flag
+  if (argtype(numarg())==3) {flag=1 max=numarg()-1} else {flag=0 max=numarg()}
+  if (flag) {i=max+1 $&i=0} else i1=0
+  if (argtype(1)==1) {
+    if (! isobj($o1,"String")) $o1=new String() // will accept String or String2
+    min=2 
+  } else min=1
+  for i = min,max {
+    if (min==1) temp_string_=$si else $o1.s=$si
+    iterator_statement
+    if (flag) {j=i i=max+1 $&i+=1 i=j} else i1+=1
+  }
+}
+
+// eg for scase2("a","b","c","d","e","f") print tmpobj.s,tmpobj.t
+iterator scase2 () { local i,min,flag,na,newstr localobj o
+  flag=i1=0 newstr=min=1 
+  na=numarg()
+  if (argtype(na)==0) {i=na newstr=$i na-=1}
+  if (argtype(1)==1) {flag=1 min=2}
+  for i=min,na {
+    if (i==min || newstr) o=new String2()
+    o.s=$si i+=1  o.t=$si
+    if (flag) $o1=o else tmpobj=o
+    iterator_statement
+    i1+=1
+  }
+}
+
+iterator ocase () { local i
+  i1 = 0
+  if (isassigned($o1)) {
+    for i = 1, numarg() {
+      XO = $oi
+      iterator_statement
+      i1+=1
+    }
+    XO=nil
+ } else {
+    for i = 2, numarg() {
+      $o1 = $oi
+      iterator_statement
+      i1+=1
+    }
+  }
+  XO=nil
+}
+
+//* strm(STR,REGEXP) == regexp string match 
+func strm () { return sfunc.head($s1,$s2,"")!=-1 }
+func strc () { return strcmp($s1,$s2)==0 }
+
+//** count_substr(str,sub): count occurences of substring in str
+func count_substr () { local cnt
+  cnt = 0
+  while (sfunc.tail($s1,$s2,$s1) != -1) { cnt += 1}
+  return cnt
+}
+
+//* nind(targ,data,ind) fill the target vector with data NOT index by ind (opposite of v.index)
+proc nind () { 
+  if (! eqobj($o1,$o2)) $o1.copy($o2)
+  $o1.indset($o3,-1e20)
+  $o1.where($o1,">",-1e20)
+}
+
+//* vlk(vec)
+// vlk(vec,max)
+// vlk(vec,min,max)
+// vlk(vec,min,max,"INDEX") -- give index of each entry
+// prints out a segment of a vector
+vlk_width=80
+proc vlkomitoff () { execute1("func vlkomit () {return NOP}") }
+proc vlkomit0(){execute1("func vlkomit(){if(vcnt($o1,0)==$o1.size) return 1 else return 0}")}
+vlkomitoff()
+proc vlk () { local ii,i,j,ami,min,max,wdh,nl,na,width,tablen,omfl,ixfl localobj st,v1,vi
+  st=new String2()  v1=new Vector(numarg()) vi=new Vector()
+  nl=1 wdh=vlk_width j=0 omfl=ixfl=0 ami=2
+  na=numarg() min=0 max=$o1.size-1
+  if (vlkomit(v1)!=NOP) omfl=1 // omfl to omit printing some
+  if (argtype(na)==2) {i=na 
+    if (strm($si,"I")) {ixfl=1 vrsz($o1,vi) vi.indgen ami=1}
+    na-=1
+  }
+  if (argtype(na)==0) {i=na 
+    if ($i<0) min=$i else max=$i 
+    na-=1
+  }
+  if (argtype(na)==0) {i=na min=$i na-=1}
+  if (max<0) max+=$o1.size
+  if (min<0) min+=$o1.size
+  if (max>$o1.size-1) { max=$o1.size-1 printf("vlk: max beyond $o1 size\n") }
+  sprint(st.t,"%%s:%s",dblform)
+  width=0
+  if (strm(tabform,"\t")) tablen=6 else if (strm(tabform,"\n")) tablen=-1e5 else {
+    tablen=sfunc.len(tabform) }
+  for ii=min,max { 
+    if (omfl) { v1.resize(0)
+      for i=1,na v1.append($oi.x[ii])
+      if (vlkomit(v1)) continue
+    }
+    if (ixfl) sprint(st.s,dblform,vi.x[ii]) else sprint(st.s,dblform,$o1.x[ii])
+    for i=ami,na sprint(st.s,st.t,st.s,$oi.x[ii]) 
+    width+=(sfunc.len(st.s)+tablen)
+    if (width>vlk_width && nl) {printf("\n") width=0}
+    printf("%s%s",st.s,tabform)
+  }
+  if (nl) print ""
+}
+
+// vpr2(v1,v2) to print out 2 vecs in parallel
+proc vpr2 () { local i,fl2,max,min,newline localobj v1,v2
+  newline=80
+  v1=$o1 v2=$o2 min=0 max=v1.size if (v2.size!=max) {print "vpr2 diff szs" return}
+  for ({i=min fl2=0}; i<max; i+=1) {
+    if (v1.x[i]==BVBASE || v2.x[i]==BVBASE) {
+      if (!fl2) printf(" ")  
+      fl2=1  
+    } else { 
+      fl2=0
+      printf("\n%5.1g %5.1g [%d]",v1.x[i],v2.x[i],i)
+    }
+  }
+  print ""
+}
+
+//** vlkp(SRC,PVEC) uses indices in PVEC to print out values in SRC
+proc vlkp () { local i,j,wdh
+  j=0 nl=1 wdh=vlk_width
+  if (numarg()==2) {
+    for vtr(&x,$o1) {
+      printf("%g%s",$o2.x[x],tabform)
+      if ((j=j+1)%vlk_width==0 && nl && strcmp(tabform," ")==0) { print "" }
+    }
+  } else {
+    for vtr(&x,$o1) { for i=2,numarg() printf("%g%s",$oi.x[x],tabform) 
+      print "" }
+  }
+  if (nl) print ""
+}
+
+//* vprf() prints 1,2 or 3 vectors in parallel to output file
+proc vprf () { local x2
+  if (! tmpfile.isopen()) {
+    print "Writing to temp file 'temp'"
+    tmpfile.wopen("temp")
+  }
+  if (numarg()==1) { 
+    for vtr(&x,$o1) { tmpfile.printf("%g\n",x) }
+  } else if (numarg()==2) { 
+    for vtr2(&x,&y,$o1,$o2) { tmpfile.printf("%g %g\n",x,y) }
+  } else if (numarg()==3) { 
+    for vtr2(&x,&y,$o1,$o2,&ii) { x2=$o3.x[ii] tmpfile.printf("%g %g %g\n",x,y,x2) }
+  }
+  tmpfile.close
+}
+
+//* vpr() prints 1,2 or 3 vectors in parallel to STDOUT
+proc vpr () { local x2
+  if (numarg()==1) { 
+    for vtr(&x,$o1) { printf("%g",x) }
+  } else if (numarg()==2) { 
+    for vtr2(&x,&y,$o1,$o2) { printf("%g:%g ",x,y) }
+  } else if (numarg()==3) { 
+    for vtr2(&x,&y,$o1,$o2,&ii) { x2=$o3.x[ii] printf("%g:%g:%g ",x,y,x2) }
+  }
+  print ""
+}
+
+//* readvec(vec) read from line
+proc readvec () { 
+  $o1.resize(0)
+  while (read(xx)) $o1.append(xx)
+  vlk($o1)
+}
+  
+//* popvec(), savenums, readnums, vecsprint, savevec, savestr
+//  vrsz(), vcp(), zvec(), resize, copy, empty
+proc pushvec () { local i // same as .append, retained for compatability
+  for i=2, numarg() $o1.append($i)
+}
+
+//** insvec(VEC,IND,VAL1[,VAL2,...]) insert values into the vector
+proc insvec () { local ix,i,a // insert values into a vector
+  a=allocvecs(1)  ix=$2
+  for i=3, numarg() mso[a].append($i)
+  $o1.insrt(ix,mso[a])
+  dealloc(a)
+}
+
+//** revec() clear vector then append
+proc revec () { local i,x localobj o,st // clear vector then append
+  if (! isobj($o1,"Vector")) $o1=new Vector(100)
+  if (argtype(2)==2) {
+    o=$o1 o.resize(0)
+    st=new String2($s2)
+    if (strm(st.s,",")) { // use split
+      split(st.s,o)
+    } else if (strm(st.s," ")) {
+      split(st.s,o," ")
+    } else while (sfunc.len(st.s)>0) { // assume binary vector, could generalize for hex and base64
+      sscanf(st.s,"%1d",&x)
+      o.append(x)
+      sfunc.tail(st.s, ".", st.t)
+      st.s=st.t
+    }
+  } else for (i=1;i<=numarg();i+=1) { 
+    ty=argtype(i)
+    if (ty==1) {        o=$oi o.resize(0)
+    } else if (ty==0) { o.append($i)
+    } else if (ty==3) { o.append($&i) }
+  }
+}
+
+//** unvec(VEC,&a,&b,...) put values from vector back into doubles (via pointers)
+proc unvec () { local i
+  if ($o1.size!=numarg()-1) { printf("unvec WARNING resizing %s to %d\n",$o1,numarg()-1) 
+    $o1.resize(numarg()-1) }
+  for i=2,numarg() $&i=$o1.x[i-2] 
+}
+
+//** wevec(VEC,wt0,wt1,...) returned weighted sum
+func wevec () { local i,sum
+  if ($o1.size!=numarg()-1) { printf("wevec SIZE ERR %d %d\n",$o1.size,numarg()-1) return }
+  sum=0
+  for i=2,numarg() sum+=$o1.x[i-2]*$i
+  return sum
+}
+
+//** vrsz(VEC or NUM,VEC1,VEC2...,VECn or NUM)  -- vector resize -- to size of first arg
+//   vrsz(VEC or NUM,VEC1,NUM,VEC2,etc)  -- vector resize -- to size of first arg (vec or num)
+// or prior NUM
+// optional final number is fill
+func vrsz () { local i,sz,max,fill,flag,rsz0
+  max=numarg()
+  flag=rsz0=0
+  if (argtype(1)==1) { 
+    if (isobj($o1,"Vector")) sz=$o1.size else if (isobj($o1,"List")) sz=$o1.count
+    if (argtype(2)==0) {printf("vrsz(vec,num) backwards ERR\n") return -1}
+  } else sz=$1
+  if (argtype(max)==0) {i=max max-=1 fill=$i flag=1}
+  if (argtype(max)==2) {max-=1 rsz0=1} // string means resize(0)
+  if (sz<0) sz+=$o2.size // reduce size
+  if (sz<0) {printf("vrsz ERR: can't resize %s to %d\n",$o2,sz) return sz}
+  for i=2, max { 
+    if (argtype(i)==0) sz=$i else {
+      $oi.resize(sz)  
+      if (rsz0) $oi.resize(0) else if (flag) $oi.fill(fill) 
+    }
+  }
+  return sz
+}
+
+//** vcp() -- copy vector segment with resizing
+proc vcp () { local i,sz
+  $o1.resize($4-$3+1) $o1.copy($o2,$3,$4)
+}
+
+//** veccut(VEC,min,max) just keep a piece of the vector
+// veccut(VEC,min,max,tstep) generate indices from times using tstep
+proc veccut () { local a localobj v1
+  a=allocvecs(v1)
+  if (numarg()==4) { min=round($2/$4) max=round($3/$4)
+  } else { min=$2 max=$3 }
+  v1.copy($o1,min,max) 
+  $o1.copy(v1) 
+  dealloc(a)
+}
+
+//** zvec()
+proc zvec () { local i // make vectors zero size
+  for i=1, numarg() $oi.resize(0)
+}
+
+//* save and read series
+//** savenums(x[,y,...]) save numbers to tmpfile via a vector
+proc savenums () { local i,vv
+  vv=allocvecs(1)
+  if (argtype(1)==3) {
+    mso[vv].from_double($2,&$&1)  
+  } else for i=1, numarg() mso[vv].append($i)
+  mso[vv].vwrite(tmpfile)
+  dealloc(vv)
+}
+
+//** readnums(&x[,&y...]) recover nums from tmpfile via a vector
+func readnums () { local a,i,cnt localobj v1
+  a=allocvecs(v1)
+  v1.vread(tmpfile)
+  cnt=0
+  if (numarg()==1 && v1.size>1) {
+    cnt=v1.size
+    if (verbose) printf("readnums WARNING: reading %d vals into presumed double array\n",cnt)
+    v1.v2d(&$&1)
+  } else {
+    if (numarg()>v1.size && verbose) {
+      printf("readnums() WARNING: too many args %d>%d\n",numarg(),v1.size) }
+    for (i=1; i<=numarg() && i<=v1.size; i+=1) $&i = v1.x[i-1]
+    cnt=i-1
+  }
+  dealloc(a)
+  return cnt
+}
+
+//** wrvstr(str) save string to a file by converting to ascii
+proc wrvstr () { local vv,i
+  vv=allocvecs(1)
+  str2v($s1,mso[vv])
+  mso[vv].vwrite(tmpfile,1)
+  dealloc(vv)
+}
+
+//** rdvstr(str) read string from a file via vread and conversion
+func rdvstr () { local vv,i,flag
+  flag=1
+  vv=allocvecs(1)
+  if (mso[vv].vread(tmpfile)) {
+    if (numarg()==1) v2str(mso[vv],$s1) else v2str(mso[vv],tstr)
+  } else flag=0
+  dealloc(vv)
+  return flag
+}
+
+//** str2v()
+proc str2v () { localobj lo
+  lo=new String()
+  $o2.resize(0)
+  lo.s=$s1
+  while (sfunc.len(lo.s)>0) {
+    sscanf(lo.s,"%c%*s",&x)
+    sfunc.right(lo.s,1)
+    $o2.append(x)
+  }
+}
+    
+//** v2str() translates from vector to string
+proc v2str () { local ii,x
+  $s2=""
+  round($o1)
+  for ii=0,$o1.size-1 { x=$o1.x[ii] sprint($s2,"%s%c",$s2,x) }
+}
+
+//* popvec() remove last entry
+func popvec () { local sz, ret
+  sz = $o1.size-1
+  if (sz<0) return 1e9
+  ret = $o1.x[sz]
+  $o1.resize[sz]
+  return ret
+}
+
+//* chkvec (look at last entry)
+func chkvec () { if ($o1.size>0) return $o1.x[$o1.size-1] else return -1e10 }
+
+// vecsprint(strdef,vec)
+proc vecsprint () { local ii
+  if ($o2.size>100) { return }
+  for ii=0,$o2.size-1 { sprint($s1,"%s %g ",$s1,$o2.x[ii]) }
+}
+
+// savevec([list,]vec1[,vec2,...]) add vector onto veclist or other list if given as 1st arg
+// don't throw out vectors
+func savevec () { local i,flag,beg localobj v1
+  if (numarg()==0) { savevec(hoc_obj_[0],hoc_obj_[1]) return }
+  if (isobj($o1,"List")) beg=2 else beg=1
+  for i=beg, numarg() { 
+    if (veccollect.count>0) { // grab a vector from garbage collection
+      v1=veccollect.object(veccollect.count-1)
+      veccollect.remove(veccollect.count-1)
+    } else v1 = new Vector($oi.size)
+    v1.copy($oi)
+    v1.label($oi.label)
+    if (beg==2) $o1.append(v1) else veclist.append(v1)
+  }
+  if (beg==2) return $o1.count-1 else return veclist.count-1
+}
+
+// prveclist(filename[,list])
+proc prveclist () { localobj xo
+  if (!batch_flag && tmpfile.ropen($s1)) {
+    printf("%s exists; save anyway? (y/n) ",$s1)
+    getstr(temp_string_) chop(temp_string_)
+    if (strcmp(temp_string_,"y")!=0) return
+  }
+  if (! tmpfile.wopen($s1)) { print "Can't open ",$s1  return }
+  if (numarg()==2) {
+    for ltr(xo,$o2) xo.vwrite(tmpfile)
+  } else {
+    for ltr(xo,veclist) xo.vwrite(tmpfile)
+  }
+  tmpfile.close()
+}
+
+// prvl2(filename[,list]) --- save using a more standard fwrite
+proc prvl2 () { localobj xo,o
+  if (!batch_flag && tmpfile.ropen($s1)) {
+    printf("%s exists; save anyway? (y/n) ",$s1)
+    getstr(temp_string_) chop(temp_string_)
+    if (strcmp(temp_string_,"y")!=0) return
+  }
+  if (! tmpfile.wopen($s1)) { print "Can't open ",$s1  return }
+  if (numarg()==2) o=$o2 else o=veclist
+  for ltr(xo,o) {tmpfile.printf("%d\n",xo.size) xo.fwrite(tmpfile)}
+  tmpfile.close()
+}
+
+// rdveclist("FILENAME"[,list])
+// rdveclist("FILENAME"[,NOERASE])
+proc rdveclist () { local flag,a
+  flag=0
+  a=allocvecs(1)
+  if (numarg()==1) { flag=1 clrveclist() } else if (argtype(2)==1) $o2.remove_all else flag=1
+  if (! tmpfile.ropen($s1)) { print "Can't open ",$s1  return }
+  while (mso[a].vread(tmpfile)) {
+    if (flag) savevec(mso[a]) else savevec($o2,mso[a])
+  }
+  tmpfile.close()
+  tmpobj=veclist
+  dealloc(a)
+}
+  
+// rdvecs("FILENAME",vec1,vec2,...)
+proc rdvecs () { local i
+  if (! tmpfile.ropen($s1)) { print "Can't open ",$s1  return }
+  for i=2,numarg() {
+    if ($oi==nil) $oi=new Vector()
+    if ($oi.vread(tmpfile)==0) printf("WARNING nothing to read into %s\n",$oi)
+  }
+  tmpfile.close()
+}
+  
+// svvecs("FILENAME",vec1,vec2,...)
+proc svvecs () { local i
+  clrveclist()
+  for i=2,numarg() savevec($oi)
+  prveclist($s1)
+  clrveclist()
+}
+  
+// vpad(vec,howmany,val[,right])
+proc vpad () { local a
+  a=allocvecs(1)
+  mso[a].resize($2) mso[a].fill($3)
+  if (numarg()==4) $o1.append(mso[a]) else {
+    mso[a].append($o1) $o1.copy(mso[a])     }
+  dealloc(a)
+}
+
+// vtrunc(vec,howmany[,right])
+proc vtrunc () { local a
+  if (numarg()==3) $o1.resize($o1.size-$2) else {
+    $o1.reverse $o1.resize($o1.size-$2) $o1.reverse
+  }
+}
+
+proc rdxy () { local a,flag
+  a = allocvecs(1)
+  revec(ind,vec)
+  if (numarg()>=1) tmpfile.ropen($s1) else tmpfile.ropen("aa")
+  if (numarg()>=2) flag=$2 else flag=2
+  mso[a].scanf(tmpfile)
+  if (flag==2) {
+    for vtr2(&x,&y,mso[a]) {ind.append(x) vec.append(y)}
+  } else {
+    ind.copy(mso[a])
+  }
+  print ind.size," points read"
+  dealloc(a)
+}
+
+// closest(vec,num) -- return ind for vec member closest to num
+func closest () { local a,ret
+  a=allocvecs(1)
+  mso[a].copy($o1) mso[a].sub($2) mso[a].abs
+  ret=mso[a].min_ind
+  dealloc(a)
+  return ret
+}
+
+// memb(TEST#,#1,#2,...) -- true if the TEST# is in the list
+func memb () { local na,i
+  for i=2,numarg() if ($1==$i) return 1
+  return 0
+}
+
+proc clrveclist () { localobj o,xo
+  if (numarg()==1) o=$o1 else o=veclist
+  for ltr(xo,o) { xo.resize(0) veccollect.append(xo) }
+  o.remove_all()
+}
+
+// savestr(str1...) add string obj onto tmplist
+proc savestr () { local i
+  if (argtype(1)==1) for i=2, numarg() $o1.append(new String($si)) else {
+    for i=1, numarg() tmplist.append(new String($si))
+  }
+}
+
+// redund with v.count in vecst.mod
+func vcount () { local val,sum
+  val=$2 sum=0
+  for vtr(&x,$o1) if (x==val) sum+=1
+  return sum
+}
+
+// tvecl(inlist[,outlist]) -- transpose veclist
+obfunc tvecl () { local x,cnt,sz,err,ii,p localobj xo,il,ol
+  il=$o1 
+  if (numarg()>1) ol=$o2
+  if (!isassigned(ol)) {ol=veclist clrveclist()} else ol.remove_all
+  err=0   cnt=il.count sz=il.o(0).size
+  for ltr(xo,il,&x) if (xo.size!=sz) err=x
+  if (err) { print "Wrong size vector is #",x return ol }
+  p = allocvecs(1,cnt)  mso[p].resize(cnt)
+  for ii=0,sz-1 {
+    for jj=0,cnt-1 mso[p].x[jj] = il.o(jj).x[ii]
+    savevec(ol,mso[p])
+  }
+  dealloc(p)
+  return ol
+}  
+
+//* vinsect(v1,v2,v3) -- v1 gets intersection (common members) of v2,v3
+//  replaced by v.insct() in vecst.mod
+proc vinsect () {
+  $o1.resize(0)
+  for vtr(&x,$o2) for vtr(&y,$o3) if (x==y) $o1.append(x)
+}
+
+//* vecsplit(vec,vec1,vec2[,vec3,...])
+// splits vec into other vecs given
+proc vecsplit () { local num,ii,i
+  num = numarg()-1 // how many
+  for i=2,numarg() $oi.resize(0)
+  for (ii=0;ii<$o1.size;ii+=num) {
+    for i=2,numarg() if (ii+i-2<$o1.size) $oi.append($o1.x[ii+i-2])
+  }
+}
+
+//* vecsort(vec,vec1,vec2[,vec3,...])
+// sorts n vecs including first vec by first one
+proc vecsort () { local i,inv,scr,narg
+  narg=numarg()
+  if (narg<2 || narg>10) {print "Wrong #args in decvec.hoc:vecsort" return}
+  scr=inv=allocvecs(2) scr+=1
+  $o1.sortindex(mso[inv])
+  mso[scr].resize(mso[inv].size)
+  sprint(temp_string_,"%s.fewind(%s,%s,%s",mso[scr],mso[inv],$o1,$o2)
+  for i=3,narg sprint(temp_string_,"%s,%s",temp_string_,$oi)
+  sprint(temp_string_,"%s)",temp_string_)
+  execute(temp_string_)
+  dealloc(inv)
+}
+
+//** order(&x,&y,...) put values in order
+proc order () { local a,i,na
+  na=numarg()
+  a=allocvecs(1)
+  for i=1,na mso[a].append($&i)
+  mso[a].sort
+  for i=1,na $&i=mso[a].x[i-1]
+  dealloc(a)  
+}
+
+//** vdelind()  -- delete a single index
+proc vdelind () { local i,iin
+  iin = $2
+  if (iin<0) iin=$o1.size+iin
+  if (iin>$o1.size-1 || iin<0) {
+    printf("vdelind Error: index %d doesn't exist.\n",iin) return }
+  if (iin<$o1.size-1) $o1.copy($o1,iin,iin+1,$o1.size-1)
+  $o1.resize($o1.size-1)
+}
+
+//* mkveclist(num[,sz]) recreate veclist to have NUM vecs each of size SZ (or MSOSIZ)
+proc mkveclist () { local ii,num,sz,diff localobj xo
+  num=$1 
+  diff = num-veclist.count
+  if (numarg()==2) { sz=$2 } else { sz = MSOSIZ }
+  if (diff>0) {
+    for ii=0,diff-1 {
+    tmpvec = new Vector(sz)
+    veclist.append(tmpvec)
+    }
+  } else if (diff<0) {
+    for (ii=veclist.count-1;ii>=num;ii=ii-1) { veclist.remove(ii) }
+  }
+  for ltr(xo,veclist) { xo.resize(sz) }
+}
+
+//* allocvecs
+// create temp set of vectors on mso
+// returns starting point on mso 
+// eg p = allocvecs(3)
+// p = allocvecs(v1,v2,v3) // where v1..v3 are localobj or objref
+// p = allocvecs(v1,v2,v3,...,size) // set all to size
+// p = allocvecs(num,list) // append num vecs to list
+// p = allocvecs(num,size) // num vecs of size size
+// p = allocvecs(num,size,list) // append num vecs of size to list
+// p = allocvecs(num,list,size) // allow args to be given in reverse order
+// access these vectors by mso[p+0] ... [p+2]
+func allocvecs () { local i,ii,llen,sz,newv,aflg,lflg,na localobj o
+  if (numarg()==0) { 
+    print "p=allocvecs(#) or p=allocvecs(v1,v2,...), access with mso[p], mso[p+1]..." return 0 }
+  sz=MSOSIZ  na=numarg()
+  lflg=0
+  if (argtype(1)==0) {
+    aflg=0 newv=$1
+    if (na>=2) if (argtype(2)==0) sz=$2 else {lflg=1 o=$o2} // append to list in arg2
+    if (na>=3) if (argtype(3)==0) sz=$3 else {lflg=1 o=$o3} 
+    if (lflg) o.remove_all
+  } else {
+    aflg=1
+    if (argtype(na)==0) {
+      i=na sz=$i newv=i-1
+    } else newv=na 
+  }
+  llen = msoptr
+  for ii=msomax,msoptr+newv-1 { // may need new vectors
+    if (ii>=MSONUM) { print "alloc ERROR: MSONUM exceeded." return 0 }
+    mso[ii] = new Vector(sz)
+  }
+  for ii=0,newv-1 {
+    mso[msoptr].resize(sz) 
+    mso[msoptr].resize(0) 
+    msoptr = msoptr+1
+  }
+  if (msomax<msoptr) msomax = msoptr
+  if (aflg) for i=1,newv $oi=mso[i-1+llen]
+  if (lflg) for i=0,newv-1 o.append(mso[i+llen])
+  return llen
+}
+
+//** dealloc(start)
+// remove temp set of vectors from mso
+proc dealloc () { local ii,min
+  if (numarg()==0) { min = 0 } else { min = $1 }
+  msoptr = min
+}
+
+//* indvwhere family
+//** vwh(VEC,VAL) returns index where VEC.x[i]==VAL
+func vwh () { 
+  if (argtype(2)==0) return $o1.indwhere("==",$2) 
+  if (numarg()==3) return $o1.indwhere($s2,$3)
+  return $o1.indwhere($s2,$3,$4)
+}
+
+//** vval(VEC,STR,NUM) uses indwhere to return first value that qualifies
+func vval () {
+  if (argtype(2)==0) return $o1.x[$o1.indwhere("==",$2)]
+  if (numarg()==3) return $o1.x[$o1.indwhere($s2,$3)] 
+  return $o1.x[$o1.indwhere($s2,$3,$4)] 
+}
+
+//** vcnt(VEC,STR,x[,y]) uses indvwhere and returns # of values that qualify
+func vcnt () { local a,ret
+  a=allocvecs(1) 
+  if (numarg()==2) mso[a].indvwhere($o1,"==",$2)
+  if (numarg()==3) mso[a].indvwhere($o1,$s2,$3)
+  if (numarg()==4) mso[a].indvwhere($o1,$s2,$3,$4)
+  ret = mso[a].size
+  // if ($o1.size>0) printf("%d/%d (%g)\n",ret,$o1.size,ret/$o1.size*100)
+  dealloc(a)
+  return ret
+}
+//** civw(DEST,SRC1,STR1,x1[,y1]...) does compound indvwhere
+// overwrites tstr; DEST should be size 0 unless to be compounded
+// civw(DEST,0,...) will resize DEST to 0
+func civw () { local i,a,b,c,f2,x,y,sz,min
+  a=b=c=allocvecs(3) b+=1 c+=2
+  min=2
+  // if ($o1.size>0) print "Starting with previously set index vector"
+  if (argtype(2)==0) {
+    if ($2==0) { $o1.resize(0) min=3
+      if (argtype(3)==1) sz=$o3.size else {
+        printf("ERR0: arg 3 should be obj when $2==0\n",i) return -1 }
+    } else {
+      printf("ERR0a: arg 2 should be 0 if a number -- zero sizes ind vector\n") 
+      return -1
+    }
+  } else if (argtype(2)==1) sz=$o2.size else {
+    printf("ERR0b: arg 2 should be obj\n",i) return -1 }
+  for (i=min;i<=numarg();) {
+    mso[c].copy($o1) 
+    if (argtype(i)!=1) { printf("ERR1: arg %d should be obj\n",i) return -1}
+    if ($oi.size!=sz)  { printf("ERR1a: all vecs should be size %d\n",sz) return -1}
+    mso[a].copy($oi)  i+=1   // look in a
+    if (argtype(i)!=2) { printf("ERR2: arg %d should be str\n",i) return -1}
+    tstr=$si          i+=1
+    if (strm(tstr,"[[(]")) f2=1 else f2=0 // opstring2 needs 2 args
+    if (argtype(i)!=0) { printf("ERR3: arg %d should be dbl\n",i) return -1}
+    x=$i              i+=1 
+    if (f2) {
+      if (argtype(i)!=0) { printf("ERR4: arg %d should be dbl\n",i) return -1}
+      y=$i            i+=1
+    }
+    if (f2) mso[b].indvwhere(mso[a],tstr,x,y) else { // the engine
+            mso[b].indvwhere(mso[a],tstr,x)   }
+    $o1.resize(sz) // make sure it's big enough for insct -- shouldn't need
+    if (mso[c].size>0) $o1.insct(mso[b],mso[c]) else $o1.copy(mso[b])
+    if ($o1.size==0) break
+  }
+  dealloc(a)
+  return $o1.size
+}
+
+//* vecconcat(vec1,vec2,...)
+// vecconcat(vec1,list) puts concat all vecs from list
+// destructive: concatenates all vecs onto vec1
+// performs a list2vec() functionality
+proc vecconcat () { local i,max localobj xo
+  max=numarg()
+  if (numarg()<2) { 
+    print "vecconcat(v1,v2,...) puts all into v1" return 
+  }
+  if (argtype(max)==0) {max-=1 $o1.resize(0)}
+  if (isobj($o2,"List")) {
+    $o1.resize(0)
+    for ltr(xo,$o2) $o1.append(xo)
+  } else for i=2,max $o1.append($oi)
+}
+  
+//** vecelim(v1,v2)  eliminates items in v1 given by index vec v2
+proc vecelim () {
+  for vtr(&x,$o2) { $o1.x[x]= -1e20 }
+  $o1.where($o1,"!=",-1e20)
+}
+
+//** redundout(vec) eliminates sequential redundent entries
+// destructive
+func redundout () { local x,ii,p1
+  p1=allocvecs(1)
+  $o1.sort
+  mso[p1].resize($o1.size)
+  mso[p1].redundout($o1)
+  $o1.copy(mso[p1])
+  dealloc(p1)
+  return $o1.size
+}
+
+//** uniq(src,dest[,cnt]) uses redundout to return random values of a vector
+// like redundout except nondestructive
+obfunc uniq () { local a localobj v1,vret
+  a=allocvecs(v1)
+  v1.copy($o1) v1.sort 
+  if (numarg()==3) {          $o2.redundout(v1,0,$o3) 
+  } else if (numarg()==2) {   $o2.redundout(v1) 
+  } else {
+    vret=new Vector(v1.size) vret.redundout(v1)
+  }
+  dealloc(a)
+  if (numarg()==1) return vret else return $o2
+}
+
+//** complement(ind,max) for indices -- return values from 0..max that are not in ind
+proc complement () { local a,b,max
+  a=b=allocvecs(2) b+=1
+  max=$2
+  mso[a].indgen(0,max,1)
+  mso[b].resize(mso[a].size)
+  mso[b].cull(mso[a],$o1)
+  $o1.copy(mso[b])
+  dealloc(a)
+}
+
+//** albetname() generate sequential 3 char alphabetical file names (make filenames)
+obfunc albetname () { local na,sret localobj st
+  na=numarg() sret=0
+  st=new String2()
+  if (na==0) { fnum+=1 st.t=".id"
+  } else if (na>=1) {
+    if (argtype(1)==2) {st.t=$s1 fnum+=1} else fnum=$1
+  }
+  if (na==2) st.t=$s2  // partially back compatible, doesn't handle albetname(tstr,".id")
+  if (na==3) {st.t=$s3 sret=1}
+  if (fnum>17575) printf("albetname WARN: out of names: %d > %d\n",fnum,26^3-1)
+  sprint(st.s,"%c%c%c",  fnum/26/26%26+97,fnum/26%26+97,fnum%26+97)
+  if (sfunc.len(st.t)>0) sprint(st.s,"%s%s",st.s,st.t)
+  if (sret) $s2=st.s 
+  return st
+}
+
+// save_idraw([filename,save_all,PS]) -- save idraw to file
+// default is to generate albetname, save selected to idraw
+proc save_idraw () { local sv,ps localobj st,li
+  st=new String()
+  find_pwm()
+  ps=sv=1
+  if (argtype(1)==2) {
+    st.s=$s1 
+    if (argtype(2)==0) sv=$2
+    if (argtype(3)==0) ps=$3
+  } else if (argtype(1)==0) {
+    sv=$1
+    if (argtype(2)==0) ps=$2  
+  }
+  if (sfunc.len(st.s)==0) st.s=albetname().s
+  if (verbose) printf("Saving to %s\n",st.s)
+  pwm.printfile(st.s, ps, sv)
+}
+
+proc find_pwm () { localobj li
+  if (isassigned(pwm)) return
+  li=new List("PWManager")
+  if (li.count==0) pwm=new PWManager() else pwm=li.o(0)
+}
+
+// vecconv() convert $o1 by replacing instances in $o2 by corresponding instances in $o3
+proc vecconv () { local a,x,y localobj v1,v2,v3,v4
+  a=allocvecs(v1,v2,v3,v4)
+  if (argtype(2)==0) v2.append($2) else v2=$o2
+  if (argtype(3)==0) v3.append($3) else v3=$o3
+  vrsz($o1,v4)
+  for vtr2(&x,&y,v2,v3) { // x -> y
+    v1.indvwhere($o1,"==",x)
+    $o1.indset(v1,y)
+  }
+}
+
+//** veceq()  like vec.eq but don't have to be same size and shows discrepency
+func veceq () { local sz1,sz2,eq,beg,ii,jj,kk
+  sz1=$o1.size sz2=$o2.size
+  if (numarg()==3) beg=$3 else beg=0
+  if (sz1!=sz2) printf("%s %d; %s %d\n",$o1,sz1,$o2,sz2)
+  ii=0 jj=beg
+  while (ii<sz1 && jj<sz2) {
+    if ($o1.x[ii]!=$o2.x[jj]) { 
+      eq=0
+      printf("Differ at %d %d\n",ii,jj) 
+      for kk=-10,10 if ((ii+kk)>=0 && (ii+kk)<sz1 && (jj+kk)>=0 && (jj+kk)<sz2) {
+        printf("(%d)%g:(%d)%g ",(ii+kk),$o1.x[ii+kk],(jj+kk),$o2.x[jj+kk])  }
+      print ""
+      break 
+    } else eq=1
+    ii+=1 jj=ii+beg
+  }
+  return eq
+}
+
+//* isstring() determine if object $o1 is of type string, if so return the string in [$s2]
+func isstring () {
+  sprint(tstr,"%s",$o1)
+  if (sfunc.substr(tstr,"String")==0) {
+    if (numarg()==2) sprint($s2,"%s",$o1.s)
+    return 1
+  } else {
+    if (numarg()==2) sprint($s2,"%s",$o1)
+    return 0
+  }
+}
+
+//** isassigned() checks whether an object is Null
+if (name_declared("VECST_INSTALLED")) {
+  sprint(tstr,"func isassigned () { return !isojt($o1,nil) }")
+} else {
+  sprint(tstr,"func isassigned () { return !isobt($o1,nil) }")
+}
+execute1(tstr)
+
+//** declare goes through a list of scalars and assigns them if they don't already exist
+// eg declare("adj",nil,"vd",nil,"vc",nil,"allcells",0,"div","d[1][1]")
+func declare () { local i,nd,min,verbose,ty,tye,ret localobj st,ut
+  if (argtype(1)==0) {verbose=0 min=2} else {min=verbose=1}
+  if (numarg()==0) {
+    printf("eg declare(\"obj\",new Vector(),\"num\",0,\"arr\",\"d[2][2]\",\"vec\",\"o[5]\",\"str\",\"\")\nfirst arg num means quiet")
+    return 0 }
+  st=new String2() ut=new String2() ret=0
+  ut.s="^[do]\\["  ut.t="^[A-Z][A-Za-z]+[(][^)]*[)]$" // for declaring arrays and objects
+  for i=min,numarg() {
+    st.s=$si     i=i+1
+    ty=argtype(i)
+    nd=name_declared(st.s)
+    if (nd==1) { nd=0
+      if (verbose) {
+        printf("declare WARN defining '%s' despite prior existence in symbol table\n",st.s) }}
+    if ((nd==5 && ty==0) || (nd==4 && ty==2) || (nd==2 && ty==1)) { // OK -- DO NOTHING
+      if (i==min+1) ret=1
+      if (verbose) printf("'%s' predeclared\n",st.s)
+    } else if (nd != 0) { // different type codes from name_declared() bzw argtype()
+      if ((nd==5 && ty==2) || (nd==2 && ty==2)) {
+        if (strm($si,ut.s)) { // name_declared gives 2 for either objref and objarray
+          if (nd==5) st.t="DOUBLE" else st.t="OBJ"
+          if (verbose) {
+            printf("'%s' predeclared as %s array: WARN: no check on type or dims\n",st.s,st.t)}
+          continue  // declaration for a double or obj array 
+        } else  if (strm($si,ut.t)) { 
+          if (verbose) printf("'%s' predeclared\n",st.s)
+          continue  // declaration for an object
+        }
+      }
+      if (nd==5) tye=0 else if (nd==4) tye=2 else if (nd==2) tye=1 
+      if (verbose) printf("Declared ERR %s predeclared as a %d statt %d\n",st.s,tye,ty)
+    } else { // declare it
+      if (ty==0) { 
+        sprint(st.t,"%s=%g",st.s,$i)
+      } else if (ty==1) { 
+        if ($oi==nil) {  sprint(st.t,"objref %s\n%s=nil",st.s,st.s)
+        } else           sprint(st.t,"objref %s\n%s=%s", st.s,st.s,$oi)
+      } else if (ty==2) { // key strings are eg d[5][5] or o[5][5] for double or obj array
+        if (strm($si,ut.s)) {
+          if (strm($si,"^d")) ty=0 else ty=1
+          sfunc.tail($si,"[do]",st.t) 
+          if (ty==0) sprint(st.t,"double %s%s",st.s,st.t) else \
+                     sprint(st.t,"objref %s%s",st.s,st.t) 
+        } else if (strm($si,ut.t)) {
+          sprint(st.t,"objref %s\n%s = new %s",st.s,st.s,$si) 
+        } else sprint(st.t,"strdef %s\n%s=\"%s\"",st.s,st.s,$si)
+      }
+      execute1(st.t)
+    }
+  }
+  return ret
+}
+
+//** declared goes through a list of function names and makes sure they exist
+// useful to check a bunch of names before entering a template that calls them as external
+proc declared () { local i,nd,min,flag
+  if (argtype(1)==0) {flag=$1 min=2} else {flag=0 min=1}
+  for i=min,numarg() {
+    nd=name_declared($si)
+    if (nd==0 || (flag==1 && nd==1)) { // declare it or clear it
+      // sprint(tstr,"func %s () {printf(\"\\tEMPTY FUNCTION %s()\\n\") return 0}",$si,$si)
+      sprint(tstr,"func %s () {return 0}",$si)
+      execute1(tstr)
+    } else if (nd!=1) { // 2=obj,3=sec,4=str,5=dbl
+      printf("NAME CONFLICT: %s can't be a func since was declared as a %d\n",$si,nd)
+    }
+  }
+}
+
+//** isit() like isassigned() but can take a string instead
+obfunc isit () { local ret localobj sv,o,st
+  o=new Union()  st=new String()
+  if (argtype(1)==2) {
+    sv=XO
+    sprint(st.s,"XO=%s",$s1)
+    execute(st.s) // XO points to the thing
+    ret=isassigned(XO)
+    o.x=ret
+    o.s=$s1
+    o.o=XO
+    XO=sv
+    return o
+  } else return isassigned($o1)
+}
+
+//** isob(s1,s2) like isobj but takes string statt obj
+func isob () { localobj st
+  st=new String()
+  sprint(st.s,"XO=%s",$s1)
+  execute(st.s) // XO points to the thing
+  sprint(st.s,"%s",XO)
+  if (sfunc.substr(st.s,$s2)==0) {
+    return 1
+  } else {
+    return 0
+  }
+}
+
+//** eqobj(o1,o2) checks whether 2 objects are the same
+func eqobj () {	return object_id($o1) == object_id($o2) }
+//** ocnt(STR) counts number of objects named string
+func ocnt () { local ret
+  tmpobj=new List($s1) ret=tmpobj.count
+  tmpobj=nil
+  return ret
+}
+
+//** isobj(o1,s2) checks whether object $o1 is of type $s2
+func isobj () { localobj st
+  st=new String()
+  sprint(st.s,"%s",$o1)
+  if (sfunc.substr(st.s,$s2)==0) {
+    return 1
+  } else {
+    return 0
+  }
+}
+
+//** isobt(o1,o2) checks whether object $o1 is of type $o2
+func isobt () { localobj s
+  s=new String2()
+  sprint(s.s,"%s",$o1)  sprint(s.t,"%s",$o2)
+  sfunc.head(s.s,"\\[",s.s) sfunc.head(s.t,"\\[",s.t)
+  if (strc(s.s,s.t)) return 1 else return 0
+}
+
+// destructive of $s1
+func str2num () { local x localobj o,st
+  x=1e9
+  if (sscanf($s1,"%d",&x)!=1) {
+    o=new Union() st=new String()
+    sprint(st.s,"%s.x=%s",o,$s1)  // o has temp existance in global namespace
+    if (!execute1(st.s,0)) printf("Can't find '%s'\n",$s1)
+    x=o.x
+  }
+  return x
+}
+
+func isnum () { return strm($s1,"^[-+0-9.][-+0-9.eE]*$") }
+
+// fln(num,STR_OBJ) move forward line n lines, chop string at end, remove quotes if present
+// fln("rxp",STR_OBJ) move forward to regexp rxp; with arg3 use exact search
+// fln("rxp OR n",STR_OBJ,obj) return union in obj with more data
+// uses tmpfile; assumes that file is open for reading
+fln_lnum=0 // use to count lines; must be rest by calling routine
+func fln () { local n,nn,x,y localobj o,st,un
+  n=nn=0 y=OK o=$o2
+  if (argtype(1)==0) nn=$1 // if need to back up
+  if (argtype(3)==1 || argtype(4)==1) { un=new Union(tmpfile.tell())
+    if (argtype(3)==1) $o3=un else $o4=un 
+  }
+  if (nn) {
+    while(n<nn) { tmpfile.gets(o.s) n+=1 }
+  } else { // look for a string
+    st=new String2()
+    if (argtype(3)!=0) { // default regexp search
+      if (strc(o.s,"A")) o.s="B" else o.s="A" // start with something different
+      while (! strm(o.s,$s1)) {tmpfile.gets(o.s) n+=1}
+    } else {  // exact string search
+      sprint(st.s,"%s\n",$s1) // look for this string
+      o.s=$s1 // make sure not somehow starting with exactly the same thing
+      while (strcmp(o.s,st.s)!=0) {tmpfile.gets(o.s) n+=1} // might want to return line cnt
+    }
+  }
+  sfunc.left(o.s,sfunc.len(o.s)-1) // get rid of newline
+  if (sfunc.head(o.s,"\"","")==0) { // find quote at beginning
+    sfunc.left(o.s,sfunc.len(o.s)-1) // assume quote at end
+    sfunc.right(o.s,1)
+  } else if (sscanf(o.s,"%g,%g",&x,&y)==2) { // specifically used by NQS.rddif
+  } else if (sscanf(o.s,"%g",&y)==1) { }
+  if (un!=nil) {un.x[1]=tmpfile.tell() un.x[2]=n un.x[3]=x un.x[4]=y un.s=o.s}
+  fln_lnum+=n
+  return y
+}
+
+// like perl chop -- removes the last character
+// chop(STR[,TERM]); TERM chop only TERM
+// note that no + means must repeat char eg "))*" statt ")+"
+func chop () { local ln1,match localobj st
+  ln1=sfunc.len($s1)  st=new String()
+  if (numarg()==2) { 
+    if (!strc($s2,"\n")) sprint($s2,"%s$",$s2) // just look for terminal character
+    if ((match=sfunc.head($s1,$s2,st.s))==-1) {
+      return 0 
+    } else {
+      sfunc.left($s1,match) 
+      return match
+    }
+  } else if (sfunc.len($s1)>=1) {
+    sfunc.left($s1,ln1-1) 
+    return 1
+  } else {
+    print "ERR: chop called on empty string" }
+    return 0
+}
+
+// lchop(STR[,BEGIN]) -- chop from the left
+func lchop () { local ln1,match localobj st
+  ln1=sfunc.len($s1)  st=new String()
+  if (numarg()==2) { 
+    sprint($s2,"^%s",$s2) // just look for initial chars
+    if ((match=sfunc.tail($s1,$s2,st.s))==-1) {
+      return 0 
+    } else {
+      sfunc.right($s1,match) 
+      return match
+    }
+  } else if (sfunc.len($s1)>=1) {
+    sfunc.right($s1,1) 
+    return 1
+  } else {
+    print "ERR: chop called on empty string" }
+    return 0
+}
+
+// strcat(tstr,"stra","strb",...) tstr=stra+strb+...
+// 1st arg can be a strdef or String obj
+// other args can be strdef, String obj, literal string, or number handled as %g
+// returns String obj
+obfunc strcat () { local i,na localobj out
+  na=numarg() 
+  if (argtype(1)==0) { out=new String() 
+  } else if (argtype(1)==1) { 
+    if (isassigned($o1)) out=$o1 else { out=new String() $o1=out }
+  } else { out=new String() out.s=$s1 } // print "AA:",$s1," ",sfunc.len($s1)
+  if (argtype(na)==0) { out.s="" na-=1 } // clear string
+  for i=2,na {
+    if (argtype(i)==1) {        sprint(out.s,"%s%s",out.s,$oi.s) 
+    } else if (argtype(i)==2) { sprint(out.s,"%s%s",out.s,$si) 
+    } else                      sprint(out.s,"%s%g",out.s,$i) 
+  }
+  if (argtype(1)==2) $s1=out.s
+  return out
+}
+
+// split(string,vec) // split comma sep string into numbers
+// split(string,list) // split comma sep string into list of strings
+// split(string,list,regexp) // split regexp sep string into list of strings
+// split(string,vec,regexp,1) // split but don't interpret: eg "5*3"->15 or "x"->val
+// split(string,list,num) // split every num chars
+// eg split("534,  43 , 2, 1.4, 34",vec[,"/"])
+// split("13, 3*PI/2*tau/2, 32+7, 6, 9.2, 42/3",vec) 
+//    optional 3rd str is what to split on; default is comma
+split_interp=1
+func split () { local i,vf,x,done,num localobj s,st,o
+  if (numarg()==0) {
+    printf("eg split(\"534 43 2 1.4 34\",vec,\" \") split(\"a,b,c,d,e\",tmplist)")
+    return -1 }
+  s=new String2() st=new String2()
+  s.t=$s1 
+  if (argtype(2)!=1) {
+    o=new Vector() vf=2 i=2
+  } else { 
+    o=$o2 i=3
+    if (isobj(o,"Vector")) {
+      vf=1 
+    } else {
+      vf=0
+      if (!isassigned(o)) { o=new List() $o2=o }
+    }
+  }
+  if (vf) revec(o) else o.remove_all
+  if (argtype(i)==2) {       st.s=$si   i+=1
+  } else if (argtype(i)==1) {st.s=$oi.s i+=1
+  } else                     st.s="[, ]+"
+  if (argtype(i)==0) { // length split into a list eg c2 c2 c2 etc
+    if (vf) {printf("Split err: attempting to do length split into vector: %s",o) return 0}
+    num=$i
+    sprint(st.s,"%%*%ds%%s",num) // eg "%2*s%s" to get all but first 2 chars
+    sprint(st.t,"%%%ds",num)     // eg "%2s"    to get first 2 chars
+    if (num>sfunc.len(s.t)){
+      printf("split() ERRA %s of length %d in pieces of %d?\n",s.t,sfunc.len(s.t),num) return 0}
+  } else num=0
+  while (sfunc.len(s.t)>0) {
+    done=0
+    if (vf) {
+      if (split_interp) if (strm(s.t,"^[^,]+[+*/-]")) {
+        sfunc.head(s.t,",",s.s)
+        if (sfunc.len(s.s)==0) s.s=s.t
+        sprint(s.s,"%s.append(%s)",o,s.s) execute(s.s)
+        done=1
+      } 
+      if (!done) if (sscanf(s.t,"%lf",&x)) { 
+        o.append(x)
+        done=1
+      } 
+      if (!done && split_interp) { // try to interpret as a variable
+        hoc_ac_=ERR // global hoc_ac_ for execute1()
+        sfunc.head(s.t,st.s,s.s)
+        if (sfunc.len(s.s)==0) s.s=s.t // the end
+        sprint(st.t,"hoc_ac_=%s",s.s)
+        execute1(st.t,0) // no error
+        if (hoc_ac_==ERR) {
+          printf("split WARNING skipping non-parsable value: %s\n",s.s)
+        } else {
+          o.append(hoc_ac_) 
+        }
+        done=1
+      }
+      if (vf==2) if (o.size==0) return ERR else return o.x[0]
+    } else { // split into a list
+      if (num) {
+        sscanf(s.t,st.t,s.s)
+        o.append(new String2(s.s,s.s))
+      } else {
+        sfunc.head(s.t,st.s,s.s)
+        if (sfunc.len(s.s)==0) s.s=s.t // the end
+        o.append(new String2(s.s,s.s))
+      }
+      done=1
+    }
+    if (num) { // splitting equal length strings
+      if (sfunc.len(s.t)<=num) s.t="" else sscanf(s.t,st.s,s.t)
+    } else {
+      sfunc.tail(s.t,st.s,s.t)
+    }
+  }
+  if (vf) return o.size else return o.count
+}
+
+//** splitmatch(str,strlist) returns which string in strlist matches the str
+func splitmatch () { local ii,x,ret localobj ll,xo
+  ll=$o2 ret=-1
+  for ltr(xo,ll,&x) {
+    if (strm($s1,xo.s)) {ret=x
+      break }
+  }
+  return ret
+}
+
+// parsenums(STR[,VEC]) find first or all the numbers in a string
+func parsenums () { print "Use split(\"str\") instead" }
+
+// intervals(TRAIN,OUTPUT)
+func intervals () { local a
+  if ($o1.size<=1) { printf("%s size <2 in intervals()\n",$o1) return 0}
+  $o2.deriv($o1,1,1)
+  return $o2.size
+}
+
+// invl(train,stats[,thresh])
+func invl () { local a,x,sz localobj v1,v2
+  a=allocvecs(v1,v2)
+  if ($o1.size<=1) { printf("%s size <2 in invl()\n",$o1) 
+    $o2.resize(5) $o2.fill(-1)
+    dealloc(a)
+    return 0
+  }
+  if (!$o1.ismono(2)) printf("decvec::invl() WARN: %s not sorted\n",$o1)
+  v1.deriv($o1,1,1)
+  if (numarg()==3) {
+    if ((x=v1.w("<",$3,-1))>0) { // tag and remove all below threshold
+      v1.sort v1.reverse
+      v1.resize(v1.size-x)
+    }
+  }
+  stat(v1,$o2)
+  sz=v1.size
+  dealloc(a)
+  return sz
+}
+
+// freql(train,stats)
+// doesn't make much sense to take the mean of inverses 
+func freql () { local a localobj v1
+  a=allocvecs(v1)
+  if ($o1.size<=1) { printf("%s size <2 in intervals()\n",$o1) return 0}
+  v1.deriv($o1,1,1)
+  v1.inv(1e3)
+  stat(v1,$o2)
+  return v1.size
+}
+
+// downcase(tstr[,UPCASE]) 
+obfunc downcase () { local len,ii,let,diff,min,max localobj st
+  diff=32 min=65 max=90 st=new String2()
+  if (argtype(1)==2) st.s=$s1 else st.s=$o1.s
+  if (numarg()==2) { diff=-diff min=97 max=122 } // if flag -> upcase
+  len = sfunc.len(st.s)
+  for ii=1,len {
+    sscanf(st.s,"%c%*s",&x)
+    sfunc.right(st.s,1)
+    if (x>=min&&x<=max) {
+      sprint(st.s,"%s%c",st.s,x+diff)
+    } else sprint(st.s,"%s%c",st.s,x) // just rotate the letter
+  }
+  if (argtype(1)==2) $s1=st.s
+  return st
+}
+
+// newlst() puts a newline in the middle of a string
+proc newlst () { local l
+  if (numarg()>1) l=$2 else l=int(sfunc.len($s1)/2)
+  temp_string_=$s1
+  temp_string2_=$s1
+  sfunc.left(temp_string_,l)
+  sfunc.right(temp_string2_,l)
+  sprint($s1,"%s\n%s",temp_string_,temp_string2_)
+}
+
+//* rdcol(file,vec,col#,cols): read multicolumn file
+func rdcol () { local col,cols,length
+  if (numarg()==0) { print "\trdcol(\"file\",vec,col#,cols) // col#=1..." return 0}
+  col=$3 cols=$4 length=0
+  if (! tmpfile.ropen($s1)) { printf("\tERROR: can't open file \"%s\"\n",$s1) return 0}
+  while (tmpfile.gets(temp_string_) != -1) length+=1 // count lines
+  print length
+  tmpfile.seek()
+  $o2.scanf(tmpfile,length,col,cols)
+  if ($o2.size!=length) printf("rdcol ERR: only read %d statt %d\n",$o2.size,length)
+  return length
+}
+
+//* rdmuniq(vec,n,rdm) -- augment vec by n unique vals from rdm
+//  rdmuniq(vec,n,max) -- augment vec by n unique vals 0-max
+//  rdmuniq(vec,n,min,max) -- augment vec by n unique vals min-max
+// draw n numbers without replacement, only makes sense with discrete distribution
+// could do something like 
+// mso[a].setrand($o3) mso[d].copy(mso[a]) 
+//     mso[b].indsort(mso[a]) mso[a].sort() mso[c].redundout(mso[a],1)
+// to get indices of unique values but then have to back index to original
+// rdmuniqm4=1 to use setrnd() statt setrand()
+rdmuniqm4=0
+proc rdmuniq () { local i,max,min,n,a3,a,see localobj ro,v1,v2,vin,l
+  if (numarg()==0) {
+    printf("rdmuniq(vec,n,rdm) - augment vec by n unique vals from rdm\
+  rdmuniq(vec,n) - augment vec by n unique vals 0-99\
+  rdmuniq(vec,n,max) - augment vec by n unique vals 0-max\
+  rdmuniq(vec,n,min,max) - augment vec by n unique vals min-max\
+  rdmuniq(vec,n,min,max,seed) - augment vec by n unique vals min-max using seed\n") 
+  return }
+  if (rdmuniqm4 && argtype(5)!=0) {
+    printf("flag set: rdmuniqm4==1: should use all 5 args: rdmuniq(vec,n,min,max,seed)\n") return }
+  vin=$o1 min=max=0 see=0 n=int($2) // round down
+  a3=argtype(3)
+  if (a3==1) {
+    ro=$o3  // random previously setup, min,max unknown
+  } else if (a3==-1) {
+      min=0 max=99
+  } else {
+     max=$3
+    if (argtype(4)==0){min=$3 max=$4}
+    if (argtype(5)==0) see=$5
+  }
+  if (max>0) { // else rdm was an arg with unknown min,max
+    if (max-min+1==n) {
+      vin.indgen(min,max,1)
+      return
+    } else if (n>max-min+1) {
+      printf("rdmuniq ERR incompatible: min=%d max=%d n=%d (%g vs %d)\n",min,max,n,$2,max-min+1) 
+      return 
+    }
+  }
+  if (!rdmuniqm4) {
+    if (ro==nil) ro=new Random()
+    if (see) ro.ACG($5) // seed it
+    ro.discunif(min,max)
+  }
+  vin.resize(0)
+  a=allocvecs(v1,v2) l=new List() l.append(v2) l.append(vin)
+  for (ii=1;vin.size<n && ii<5;ii+=1) {
+    v1.resize(n*4*ii)
+    if (rdmuniqm4) { 
+      v1.setrnd(5,max-min+1,see) 
+      v1.add(min)
+    } else v1.setrand(ro)
+    v1.uniq(l,1) // preserve order
+  }
+  if (vin.size<n) {
+    printf("rdmuniq ERR unable to find %d uniq values [%d,%d] -- only \n",n,min,max,vin.size)
+  }
+  vin.resize(n)
+  dealloc(a)
+}
+
+// rdmord (vec,n) randomly ordered numbers 0->n-1 in vec
+// eg rdmord(ind,ind.size); check: for ii=0,ind.size-1 if (ind.count(ii)!=1) print ii
+proc rdmord () { local n,a localobj v1
+  a=allocvecs(v1)  n=$2
+  rdm.uniform(0,100)
+  v1.resize(n)
+  v1.setrand(rdm)
+  v1.sortindex($o1)
+  dealloc(a)
+}
+
+// shuffle(VSRC[,VDEST]) randomly rearrange elements of vec
+obfunc shuffle () { local a  localobj v1,v2,oi,oo
+  oi=$o1
+  if (numarg()==2) {oo=$o2 oo.copy(oi)} else oo=oi
+  oo.shuffle()
+  return oo
+}
+
+// colshuf(ind,veclist) shuffle the 'transpose' of indexed vecs -- ie not the vecs themselves
+// shuffle items from list of vectors across the list rather than across the vectors
+// all vecs should be same size, eg colshuf(nq.ind,nq.fcdo) after a select
+func colshuf () { local a,x,ii,cols,rows  localobj v1,v2,oi,ol
+  oi=$o1 ol=$o2 cols=ol.o(oi.x[0]).size rows=oi.size
+  if (rows==0 || cols==0) {printf("ERRA:a 0") return -1}
+  a=allocvecs(v1,v2)
+  vrsz(rows*cols,v1,"O") 
+  for vtr(&x,oi) v1.append(ol.o(x))
+  v1.transpose(cols) v1.mshuffle() v1.transpose() // shuffle in the other direction
+  for vtr(&x,oi,&ii) ol.o(x).copy(v1,ii*cols,(ii+1)*cols-1)
+  dealloc(a)
+  return cols
+}
+
+// sample(vec,beg,end,vals) pick out n integer values from given range
+// sample(vec,end,vals) -- assumes 0
+proc sample () { local min,max,vals
+  min=0
+  if (numarg()==4) {min=$2 max=$3 vals=$4} else {max=$2 vals=$3}
+  $o1.indgen(min,max,1)
+  shuffle($o1)
+  $o1.resize(vals)
+}
+
+// round() round off to nearest integer
+func round () { local ii
+  if (argtype(1)==1) {
+    if ($o1.size==0) return 1e9
+    for ii=0,$o1.size-1 {
+      if ($o1.x[ii]>0) $o1.x[ii]=int($o1.x[ii]+0.5) else $o1.x[ii]=int($o1.x[ii]-0.5) 
+    }
+    return($o1.x[0])
+  } else {
+    if ($1>0) return int($1+0.5) else return int($1-0.5) 
+  }
+} 
+
+// filevers() pulls out version of file from first line
+func filevers () { localobj f1,s1,lx1
+  f1=new File() s1=new String() lx1=new Union()
+  if (! f1.ropen($s1)) { printf("filevers ERR, can't open %s\n",$s1) 
+    return 0 }
+  f1.gets(s1.s)
+  if (sscanf(s1.s,"%*s $Id: %*s %*d.%d",&lx1.x)!=1) {
+    printf("filevers ERR, sscanf failed %s: %s",$s1,s1.s) }
+  f1.close
+  return lx1.x
+}
+
+//* hocfind(FILENAME) searches through HOC_LIBRARY_PATH and locates file
+obfunc hocfind () { local done localobj f1,s1,s2
+  f1=new File() s1=new String() s2=new String()
+  done=0
+  system("echo -n $HOC_LIBRARY_PATH",s1.s)
+  sprint(s1.s,"%s ",s1.s) // to look at last item
+  while (sfunc.len(s1.s)>2) {
+    sfunc.head(s1.s,"[ :]",s2.s)
+    sprint(s2.s,"%s/%s",s2.s,$s1)
+    if (f1.ropen(s2.s)) {done=1 break}
+    sfunc.tail(s1.s,"[ :]",s1.s)
+  }
+  if (!done) if (f1.ropen($s1)) {sprint(s2.s,"./%s",$s1) done=1}
+  if (!done) s2.s="NOT FOUND"
+  return s2
+}
+
+//* usefiles(F1[,F2,...]) list of files returns string with list of files and versions
+obfunc usefiles () { local i localobj s1,s2
+  s2=new String()
+  s2.s="Using "
+  for i=1,numarg() {
+    s1=hocfind($si)
+    sprint(s2.s,"%s %s%d",s2.s,$si,filevers(s1.s))
+  }
+  return s2
+}
+
+//* ttest(v1,v2)  student t-test
+// nrniv/sync/notebook.dol:16230
+// checked against http://www.physics.csbsju.edu/stats/t-test_bulk_form.html
+func ttest () {  local prob,df
+  df=$o1.size+$o2.size-2
+  t_val=($o1.mean-$o2.mean)/sqrt($o1.var/$o1.size + $o2.var/$o2.size)
+  prob=betai_stats(0.5*df,0.5,df/(df+t_val*t_val))
+  return prob
+}
+
+// pttest() paired t-test
+func pttest () {  local prob,sd,df,cov,j,ave1,ave2,var1,var2
+  n=$o1.size ave1=$o1.mean ave2=$o2.mean var1=$o1.var var2=$o2.var cov=0
+  if (n!=$o2.size) {printf("pttest ERR: != sizes\n",n,$o2.size) return -1}
+  for (j=0;j<n;j+=1) cov+=($o1.x[j]-ave1)*($o2.x[j]-ave2)
+  cov /= (df=n-1)
+  sd=sqrt((var1+var2-2.0*cov)/n)
+  t_val=(ave1-ave2)/sd
+  prob=betai_stats(0.5*df,0.5,df/(df+t_val*t_val))
+  // printf("%g ",t_val)
+  return prob
+}
+
+func howfull () { local a,min,max,bins,ret localobj v1
+  min=0 bins=1e3
+  if (numarg()==4){min=$2 max=$3 bins=$4} else if (numarg()==3){max=$2 bins=$3} else max=$2
+  a=allocvecs(v1,bins)
+  $o1.bin(v1,(max-min)/bins,min,max)
+  ret=1-v1.count(0)/bins
+  dealloc(a)
+  return ret
+}
+
+//* Matrix things
+// msize() print size of a matrix
+proc msize () { printf("%d x %d\n",$o1.nrow,$o1.ncol) }
+
+//** l2m() turn a vector list into a matrix
+obfunc l2m () { local ii,m,n localobj mat,l,xo
+  l=$o1
+  n=l.o(0).size m=l.count // rows x cols (data in cols)
+  mat=new Matrix(n,m)
+  for ltr(xo,l,&ii) mat.setcol(ii,xo)
+  return mat
+}
+
+//** m2l() turn a matrix into a vector list
+obfunc m2l () { local ii,m,n localobj mat,l,xo
+  l=new List() mat=$o1 m=mat.ncol n=mat.nrow
+  for ii=0,m-1 l.append(mat.getcol(ii))
+  return l
+}
+
+//** reind(ind,filter0[,ifilter1,...]) goes through a series of vectors or values 
+// to translate an index if filter is a vec then get vec.x[x] else get x+val
+func reind () { local i,x
+  x=$1 
+  for i=2,numarg() if (argtype(i)==0) x+=$i else x=$oi.x[x]
+  return x
+}
+
+// rmxtmp() sets xtmp string
+proc rmxtmp () { localobj st
+  if (wopen("xtmp")) { 
+    xtmp = "xtmp" 
+  } else if (wopen("/tmp/xtmp")) {
+    xtmp="/tmp/xtmp" 
+  } else {  
+    xtmp=strcat(1,getenv("HOME"),"/.xtmp").s 
+    if (!wopen(xtmp)) printf("Can't open an xtmp file anywhere: . /tmp ~/ \n")
+  }
+  wopen() // close the file
+}
+rmxtmp()
+
+//* matrix functions using matrix.mod stuff
+//** getdiag(matvec,destvec) 
+proc getdiag () { local a localobj v1
+  a=allocvecs(v1)
+  v1.indgen(0,ROWS*COLS,COLS+1)
+  $o2.index($o1,v1)
+  dealloc(a)
+}
+
+//** setdiag(matvec,value) 
+proc setdiag () { local a localobj v1
+  a=allocvecs(v1)
+  v1.indgen(0,ROWS*COLS,COLS+1)
+  $o1.indset(v1,$2)
+  dealloc(a)
+}
+
+func msetrc () { local x
+  if ((x=sqrt($o1.size))==int(x)) ROWS=COLS=x else printf("Unable to set ROWS,COLS\n")
+  return x
+}
+
+for scase(XO,"o","t","s","O","T","S","+") clrsym.o.append(new String(XO.s))
