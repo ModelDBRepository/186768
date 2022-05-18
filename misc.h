@@ -61,7 +61,15 @@ typedef double		sf8;	/* eight byte signed floating point number */
 extern double ERR,GET,SET,OK,NOP,ALL,NEG,POS,CHK,NOZ,GTH,GTE,LTH,LTE,EQU;
 extern double EQV,EQW,EQX,NEQ,SEQ,RXP,IBE,EBI,IBI,EBE;
 
-extern double *vector_newsize();
+#ifndef NRN_VERSION_GTEQ_8_2_0
+extern int vector_buffer_size(void*);
+extern FILE* hoc_obj_file_arg(int narg);
+#endif
+int uniq2 (int n, double *x, double *y, double *z);
+extern int list_vector_px2 (Object *ob, int i, double** px, IvocVect** vv);
+extern int list_vector_px3 (Object *ob, int i, double** px, IvocVect** vv);
+extern int list_vector_px4 (Object *ob, int i, double** px, unsigned int n);
+extern double *vector_newsize (IvocVect* vv, int n);
 extern unsigned int  dcrsz;
 extern double       *dcr;
 extern double       *dcrset(int);
@@ -83,7 +91,6 @@ extern void vector_resize();
 extern int vector_instance_px();
 extern void* vector_arg();
 extern double* vector_vec();
-extern int vector_buffer_size(void*);
 extern double hoc_epsilon;
 extern int stoprun;
 extern void set_seed();
@@ -102,12 +109,14 @@ extern int hoc_is_pdouble_arg(int narg);
 extern Symbol *hoc_get_symbol(char *);
 extern Symbol *hoc_lookup(const char*);
 extern Point_process* ob2pntproc(Object*);
+extern int IsList (Object* p);
+static void vprpr (double x, int base);
 
 extern char* hoc_object_name(Object*);
-extern int cmpdfn();
+extern int cmpdfn(double a, double b);
 extern int openvec(int, double **);
-int list_vector_px();
-double *list_vector_resize();
+int list_vector_px(Object *ob, int i, double** px);
+double *list_vector_resize(Object *ob, int i, int sz);
 static void hxe() { hoc_execerror("",0); }
 extern void FreeListVec(ListVec** pp);
 extern ListVec* AllocListVec(Object* p);
