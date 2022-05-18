@@ -381,7 +381,7 @@ FUNCTION rpval () {
   // the way to be robust. The scheme used in spearmanr is probably better.
   TINY = 1.0e-20;
   ts = r*sqrt(df/((1.0-r+TINY)*(1.0+r+TINY)));
-  mpval = betai(0.5*df,0.5,df/(df+ts*ts));
+  mpval = betai(_threadargscomma_ 0.5*df,0.5,df/(df+ts*ts));
   return mpval;
   ENDVERBATIM
 }
@@ -2015,7 +2015,7 @@ FUNCTION mc4seed () {
   for (i=2;ifarg(i);i++) {
     valseed*=(unsigned int)(*getarg(i));
   }
-  mcell_ran4_init(&valseed); // do initialization
+  mcell_ran4_init(valseed); // do initialization
   return valseed;
   ENDVERBATIM
 }
@@ -2043,16 +2043,15 @@ FUNCTION gammln (xx) {
 FUNCTION betai(a,b,x) {
 VERBATIM {
   double bt;
-  double gammln(double),betacf(double,double,double);
 
   if (_lx < 0.0 || _lx > 1.0) {printf("Bad x in routine BETAI\n"); hxe();}
   if (_lx == 0.0 || _lx == 1.0) bt=0.0;
   else
-  bt=exp(gammln(_la+_lb)-gammln(_la)-gammln(_lb)+_la*log(_lx)+_lb*log(1.0-_lx));
+  bt=exp(gammln(_threadargscomma_ _la+_lb)-gammln(_threadargscomma_ _la)-gammln(_threadargscomma_ _lb)+_la*log(_lx)+_lb*log(1.0-_lx));
   if (_lx < (_la+1.0)/(_la+_lb+2.0))
-  return bt*betacf(_la,_lb,_lx)/_la;
+  return bt*betacf(_threadargscomma_ _la,_lb,_lx)/_la;
   else
-  return 1.0-bt*betacf(_lb,_la,1.0-_lx)/_lb;
+  return 1.0-bt*betacf(_threadargscomma_ _lb,_la,1.0-_lx)/_lb;
  }
 ENDVERBATIM
 }
@@ -2117,10 +2116,9 @@ FUNCTION tstat() {
 
 FUNCTION tdistrib() {
   VERBATIM
-  double gammln(double);
   double x = *getarg(1);
   double dof = *getarg(2);
-  double res = (gammln( (dof+1.0) / 2.0 )  / gammln( dof / 2.0 ) );
+  double res = (gammln(_threadargscomma_ (dof+1.0) / 2.0 )  / gammln(_threadargscomma_ dof / 2.0 ) );
   double pi = 3.14159265358979323846;
   res *= (1.0 / sqrt( dof * pi ) );
   res *= pow((1 + x*x/dof),-1.0*((dof+1.0)/2.0));

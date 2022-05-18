@@ -5,8 +5,8 @@
 #include <limits.h> /* contains LONG_MAX */
 #include <time.h>
 #include <sys/time.h> 
-
 #include <pthread.h>
+#include <stdint.h>
 
 #if !defined(t)
   #define _pval pval
@@ -64,6 +64,19 @@ extern double EQV,EQW,EQX,NEQ,SEQ,RXP,IBE,EBI,IBI,EBE;
 #ifndef NRN_VERSION_GTEQ_8_2_0
 extern int vector_buffer_size(void*);
 extern FILE* hoc_obj_file_arg(int narg);
+extern void mcell_ran4_init(uint32_t idum);
+extern Symbol *hoc_get_symbol(char *);
+extern int hoc_is_tempobj_arg(int narg);
+Object* ivoc_list_item(Object*, int);
+#else // TODO: Update nrn master & C++ PR
+#ifdef __cplusplus
+extern "C" {
+#endif
+Object* ivoc_list_item(Object*, int);
+Symbol* hoc_get_symbol(const char* var);
+#ifdef __cplusplus
+}
+#endif
 #endif
 int uniq2 (int n, double *x, double *y, double *z);
 extern int list_vector_px2 (Object *ob, int i, double** px, IvocVect** vv);
@@ -96,17 +109,13 @@ extern int stoprun;
 extern void set_seed();
 extern void dshuffle(double* x,int nx);
 extern unsigned int valseed;
-extern void mcell_ran4_init(unsigned int *idum);
 extern double mcell_ran4(unsigned int* idum,double* ran_vec,unsigned int n,double range);
 extern int nrn_mlh_gsort();
 extern int ivoc_list_count(Object*);
-extern Object* ivoc_list_item(Object*, int);
-extern int list_vector_px2();
 extern int hoc_is_double_arg(int narg);
 extern int hoc_is_str_arg(int narg);
 extern int hoc_is_object_arg(int narg);
 extern int hoc_is_pdouble_arg(int narg);
-extern Symbol *hoc_get_symbol(char *);
 extern Symbol *hoc_lookup(const char*);
 extern Point_process* ob2pntproc(Object*);
 extern int IsList (Object* p);

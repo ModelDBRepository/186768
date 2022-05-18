@@ -49,6 +49,7 @@ VERBATIM
 #include <time.h>
 #include <stdio.h>
 #include <limits.h>
+#include <misc.h>
 #ifndef NRN_VERSION_GTEQ_8_2_0
 extern int hoc_is_tempobj(int narg);
 char *gargstr();

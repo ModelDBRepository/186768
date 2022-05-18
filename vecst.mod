@@ -2136,14 +2136,14 @@ int list_vector_px (Object *ob, int i, double** px) {
 
 //* list_vector_px2(LIST,ITEM#,DOUBLE PTR ADDRESS,VEC POINTER ADDRESS) 
 //  returns the vector pointer as well as the double pointer
-int list_vector_px2 (Object *ob, int i, double** px, void** vv) {
+int list_vector_px2 (Object *ob, int i, double** px, IvocVect** vv) {
   Object* obv;
   int sz;
   obv = ivoc_list_item(ob, i);
   if (! ISVEC(obv)) return -1;
   sz = vector_capacity((IvocVect*)obv->u.this_pointer);
   *px = vector_vec((IvocVect*)obv->u.this_pointer);
-  *vv = (void*) obv->u.this_pointer;
+  *vv = (IvocVect*) obv->u.this_pointer;
   return sz;
 }
 
