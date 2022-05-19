@@ -1344,7 +1344,7 @@ ENDVERBATIM
 : max is maximum diff to add to the tq db
 VERBATIM
 static double nearall (void* vv) {
-  register int	lo, hi, mid;
+  int lo, hi, mid;
   int i, j, k, kk, nx, ny, minind, nv[4];
   Object *ob;
   IvocVect* vvl[4];
@@ -2914,7 +2914,7 @@ FUNCTION isojt () {
   Object *ob1, *ob2;
   ob1 = *hoc_objgetarg(1); ob2 = *hoc_objgetarg(2);
   if (!ob1) if (!ob2) return 1; else return 0;
-#ifdef __cplusplus
+#ifdef NRN_VERSION_GTEQ_8_2_0
   if (!ob2 || ob1->ctemplate != ob2->ctemplate) {
 #else
   if (!ob2 || ob1->template != ob2->template) {
