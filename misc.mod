@@ -42,6 +42,7 @@ THREADSAFE
 }
 
 VERBATIM
+#include "misc.h"
 #include <unistd.h>     /* F_OK     */
 #include <errno.h>      /* errno    */
 #include <signal.h>
@@ -49,13 +50,6 @@ VERBATIM
 #include <time.h>
 #include <stdio.h>
 #include <limits.h>
-#include <misc.h>
-#ifndef NRN_VERSION_GTEQ_8_2_0
-extern int hoc_is_tempobj(int narg);
-char *gargstr();
-char** hoc_pgargstr();
-FILE* hoc_obj_file_arg();
-#endif
 ENDVERBATIM
 
 :* FUNCTION file_exist()

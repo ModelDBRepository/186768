@@ -1411,7 +1411,7 @@ static double rantran (void* vv) {
   int i,j,ix,ixe,ixvn,nvn,rvn,na,xj;
   double *ixv, *nv, *x, y[1], ixn,step,indx;
   rvn=vector_instance_px(vv, &x);
-  for (na=1;ifarg(na);na++); na--; // count args
+  for (na=1;ifarg(na);na++) {} na--; // count args
   for (i=1;i<na;i+=2) {
     if (hoc_is_object_arg(i)) {
       step=-1;
