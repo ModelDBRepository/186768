@@ -4,9 +4,9 @@
 #include <math.h>
 #include <limits.h> /* contains LONG_MAX */
 #include <time.h>
-#include <sys/time.h> 
-
+#include <sys/time.h>
 #include <pthread.h>
+#include <stdint.h>
 
 #if !defined(t)
   #define _pval pval
@@ -53,25 +53,21 @@ typedef	unsigned char	ui1;	/* one byte unsigned integer */
 typedef	char		si1;	/* one byte signed integer */
 typedef unsigned short	ui2;	/* two byte unsigned integer */
 typedef short		si2;	/* two byte signed integer */
-typedef unsigned int	ui4;	/* four byte unsigned integer */ 
-typedef int		si4;	/* four byte signed integer */ 
-typedef float		sf4;	/* four byte signed floating point number */ 
-typedef double		sf8;	/* eight byte signed floating point number */ 
+typedef unsigned int	ui4;	/* four byte unsigned integer */
+typedef int		si4;	/* four byte signed integer */
+typedef float		sf4;	/* four byte signed floating point number */
+typedef double		sf8;	/* eight byte signed floating point number */
 
 extern double ERR,GET,SET,OK,NOP,ALL,NEG,POS,CHK,NOZ,GTH,GTE,LTH,LTE,EQU;
 extern double EQV,EQW,EQX,NEQ,SEQ,RXP,IBE,EBI,IBI,EBE;
 
-extern double *vector_newsize();
-extern unsigned int  dcrsz;
-extern double       *dcr;
-extern double       *dcrset(int);
-extern unsigned int  scrsz;
-extern unsigned int *scr;
-extern unsigned int *scrset(int);
-extern unsigned int  iscrsz;
-extern int *iscr;
-extern int *iscrset(int);
-extern double BVBASE;
+#ifndef NRN_VERSION_GTEQ_8_2_0
+extern int vector_buffer_size(void*);
+extern FILE* hoc_obj_file_arg(int narg);
+extern void mcell_ran4_init(uint32_t idum);
+extern Symbol *hoc_get_symbol(char *);
+extern int hoc_is_tempobj_arg(int narg);
+Object* ivoc_list_item(Object*, int);
 extern double* hoc_pgetarg();
 extern void hoc_notify_iv();
 extern double hoc_call_func(Symbol*, int narg);
@@ -83,40 +79,52 @@ extern void vector_resize();
 extern int vector_instance_px();
 extern void* vector_arg();
 extern double* vector_vec();
-extern int vector_buffer_size(void*);
 extern double hoc_epsilon;
 extern int stoprun;
 extern void set_seed();
-extern void dshuffle(double* x,int nx);
-extern unsigned int valseed;
-extern void mcell_ran4_init(unsigned int *idum);
 extern double mcell_ran4(unsigned int* idum,double* ran_vec,unsigned int n,double range);
 extern int nrn_mlh_gsort();
 extern int ivoc_list_count(Object*);
-extern Object* ivoc_list_item(Object*, int);
-extern int list_vector_px2();
 extern int hoc_is_double_arg(int narg);
 extern int hoc_is_str_arg(int narg);
 extern int hoc_is_object_arg(int narg);
 extern int hoc_is_pdouble_arg(int narg);
-extern Symbol *hoc_get_symbol(char *);
 extern Symbol *hoc_lookup(const char*);
 extern Point_process* ob2pntproc(Object*);
+extern double nrn_event_queue_stats(double*);
+extern void clear_event_queue();
+#endif
+int uniq2 (int n, double *x, double *y, double *z);
+extern int list_vector_px2 (Object *ob, int i, double** px, IvocVect** vv);
+extern int list_vector_px3 (Object *ob, int i, double** px, IvocVect** vv);
+extern int list_vector_px4 (Object *ob, int i, double** px, unsigned int n);
+extern double *vector_newsize (IvocVect* vv, int n);
+extern unsigned int  dcrsz;
+extern double       *dcr;
+extern double       *dcrset(int);
+extern unsigned int  scrsz;
+extern unsigned int *scr;
+extern unsigned int *scrset(int);
+extern unsigned int  iscrsz;
+extern int *iscr;
+extern int *iscrset(int);
+extern double BVBASE;
+extern void dshuffle(double* x,int nx);
+extern unsigned int valseed;
+extern int IsList (Object* p);
+static void vprpr (double x, int base);
 
 extern char* hoc_object_name(Object*);
-extern int cmpdfn();
+extern int cmpdfn(double a, double b);
 extern int openvec(int, double **);
-int list_vector_px();
-double *list_vector_resize();
+int list_vector_px(Object *ob, int i, double** px);
+double *list_vector_resize(Object *ob, int i, int sz);
 static void hxe() { hoc_execerror("",0); }
 extern void FreeListVec(ListVec** pp);
 extern ListVec* AllocListVec(Object* p);
 extern ListVec* AllocILV(Object*, int, double *);
 void FillListVec(ListVec* p,double dval);
 void ListVecResize(ListVec* p,int newsz);
-extern short *nrn_artcell_qindex_;
-extern double nrn_event_queue_stats(double*);
-extern void clear_event_queue();
 
 static double sc[6];
 static FILE*  testout;
