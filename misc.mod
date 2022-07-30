@@ -46,7 +46,7 @@ VERBATIM
 #include <unistd.h>     /* F_OK     */
 #include <errno.h>      /* errno    */
 #include <signal.h>
-#include <sys/types.h>         /* MUST REMEMBER THIS */
+//#include <sys/types.h>         /* MUST REMEMBER THIS */
 #include <time.h>
 #include <stdio.h>
 #include <limits.h>
