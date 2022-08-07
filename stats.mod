@@ -433,6 +433,7 @@ ENDVERBATIM
 : unable to get the drand here to recognize the same fseed used in rand
 FUNCTION vseed () {
   VERBATIM
+
 #ifdef WIN32
   double seed;
   if (ifarg(1)) seed=*getarg(1); else {
@@ -443,12 +444,12 @@ FUNCTION vseed () {
   set_seed(seed);
   return seed;
 #else
-  struct  timeval tp;
-  struct  timezone tzp;
+  //struct  timeval tp;
+  //struct  timezone tzp;
   double seed;
   if (ifarg(1)) seed=*getarg(1); else {
-    gettimeofday(&tp,&tzp);
-    seed=tp.tv_usec;
+    //gettimeofday(&tp,&tzp); // tzp unknown storage size
+    seed=2; //Wtp.tv_usec;
   }
   srand((unsigned)seed); // srand48
   set_seed(seed);

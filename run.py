@@ -13,7 +13,7 @@ if net.noise:
 # handler for printing out time during simulation run
 def fi():
 	for i in range(0,int(h.tstop),100):
-		h.cvode.event(i, "print " + str(i))
+		h.cvode.event(i, "print(" + str(i) + ")")
 
 fih = h.FInitializeHandler(1, fi)
 
@@ -41,21 +41,21 @@ washinT  = 0      # washin time
 washoutT = 0      # washout time
 
 def dowashin():
-	print "washIN at ", washinT, " = ", h.t , " ", olmWash[0], basWash[0], pyrWashB[0], pyrWashA[0]
+	print("washIN at "), washinT, " = ", h.t , " ", olmWash[0], basWash[0], pyrWashB[0], pyrWashA[0]
 	net.olm.set_r("somaNMDA",olmWash[0])
 	net.bas.set_r("somaNMDA",basWash[0])
 	net.pyr.set_r("BdendNMDA",pyrWashB[0])
 	net.pyr.set_r("Adend3NMDA",pyrWashA[0])
 
 def dowashout():
-	print "washOUT at ", washoutT, " = " , h.t, " ", olmWash[1], basWash[1], pyrWashB[1], pyrWashA[1]	
+	print("washOUT at "), washoutT, " = " , h.t, " ", olmWash[1], basWash[1], pyrWashB[1], pyrWashA[1]	
 	net.olm.set_r("somaNMDA",olmWash[1])
 	net.bas.set_r("somaNMDA",basWash[1])
 	net.pyr.set_r("BdendNMDA",pyrWashB[1])
 	net.pyr.set_r("Adend3NMDA",pyrWashA[1])
 
 def setwash():
-	print "washinT ", washinT, " washoutT ", washoutT
+	print("washinT "), washinT, " washoutT ", washoutT
 	h.cvode.event(washinT,"nrnpython(\"dowashin()\")")
 	h.cvode.event(washoutT,"nrnpython(\"dowashout()\")")
 
@@ -124,9 +124,9 @@ class Batch:
 					for i4, r4 in enumerate(self.pow.x):
 						self.net.pyr.set_r("Adend3NMDA",r4)
 						simstr = self.getsimstr(r1,r2,r3,r4)
-						print "NMDA/AMPA: " + simstr
+						print("NMDA/AMPA: ") + simstr
 						h.run()
-						print "Time: ", h.startsw() - self.pow.timer
+						print("Time: "), h.startsw() - self.pow.timer
 					
 						self.pow.arch.reset_time_stamp()
 						
@@ -171,7 +171,7 @@ class Batch:
 			for i1, r1 in enumerate(self.pow.x):
 				for i2, r2 in enumerate(self.pow.x):
 					for i3, r3 in enumerate(self.pow.x):
-						print "[:,"+str(i1)+","+str(i2)+","+str(i3)+"]"
+						print("[:,"+str(i1)+","+str(i2)+","+str(i3)+"]")
 						pylab.plot(self.pow.x, self.pow.__dict__[var][:,i1,i2,i3],label="[:,"+str(i1)+","+str(i2)+","+str(i3)+"]", picker=1)
 		#pylab.label()
 		else:
@@ -221,8 +221,8 @@ class Batch:
 		self.pow.arch.save_fig(fig,ylabel)
 
 def onpick(event):
-	print "REWR"
-	print str(event.artist.get_label())+" ("+str(event.mouseevent.xdata)+","+str(event.mouseevent.ydata)+")"
+	print("REWR")
+	print(str(event.artist.get_label())+" ("+str(event.mouseevent.xdata)+","+str(event.mouseevent.ydata)+")")
 	return True
 
 #save vec to fn (fn is path)
@@ -233,7 +233,7 @@ def mysvvec(fn,vec):
 		vec.vwrite(fp)
 		fp.close()
 	else:
-		print "savevec ERR: couldn't open " + fn
+		print("savevec ERR: couldn't open ") + fn
 
 #this class is for saving output, i.e. figures and py files to backup	
 class Archive:
@@ -267,21 +267,21 @@ def minrunsv(simstr,tstop=1200,dt=0.1):
 	h.tstop=tstop
 	h.dt=dt
 	h.run()
-	print "saving output data"
+	print("saving output data")
 	net.calc_lfp()
 	fn = "./data/"+simstr+"_lfp.vec"
 	mysvvec(fn,net.vlfp)
 	net.setsnq() # make NQS with spike times
 	fn = "./data/"+simstr+"_snq.nqs"
 	net.snq.sv(fn)
-	print "making and saving output figures"
+	print("making and saving output figures")
 
 #read a Vector from file, fn is file-path, vec is a Vector
 def myrdvec(fn,vec):
 	fp=h.File()
 	fp.ropen(fn)
 	if not fp.isopen():
-		print "myrdvec ERRA: Couldn't open " + fn
+		print("myrdvec ERRA: Couldn't open ") + fn
 		return False
 	vec.vread(fp)
 	fp.close()
@@ -303,7 +303,7 @@ def loadminrundat(simstr):
 	try:
 		net.snq=h.NQS(fs)
 	except:
-		print "loadminrundat ERRB: couldn't read snq from " + fs
+		print("loadminrundat ERRB: couldn't read snq from ") + fs
 	net.snq.verbose=0 # next, copy snq into vectors so can plot with net.rasterplot
 	for po in net.cells:
 		for i in xrange(len(po.lidvec)):
@@ -325,7 +325,7 @@ def testrun():
 	arch.save_fig(2,"tmp_psr_soma_volt")
 	net.calc_psd(3)
 	arch.save_fig(3,"tmp_fft")
-	print "\a"
+	print("\a")
 
 def batchrun():
 	bat = Batch(net)
@@ -349,7 +349,7 @@ def testsame(ts,v1,v2):
 	h.run()
 	net.calc_lfp()
 	v2.copy(net.vlfp)
-	print "same = " , v1.eq(v2)
+	print("same = ") , v1.eq(v2)
 
 #gethilbnqs - make two NQS objects out of LFP with phase/amplitude/filered signals in theta and gamma bands
 def gethilbnqs(vlfp,minth=3,maxth=12,ming=30,maxg=80,usemlab=True):
@@ -391,9 +391,9 @@ def getampphnq(nqtheta,nqgamma,phbins=100,skipms=200):
   for i in xrange(startx,sz,1):
     bin=int(phbins*(nqtheta.v[colp][i]-phmin)/phrng)
     if bin<0:
-      print "bin < 0!"
+      print("bin < 0!")
     if bin>=phbins+1:
-      print "bin >= phbins+1"
+      print("bin >= phbins+1")
     lv.o(bin).append(nqgamma.v[cola][i])
   for i in xrange(0,int(vamp.size()),1):
     sz = lv.o(i).size()
@@ -424,9 +424,9 @@ def checkbase(endt=3e3,skipms=200,justone=False):
   j = 0
   dt = h.dt
   for i in xrange(1,-1,-1):
-    print "set olm NMDA to ", float(i)
+    print("set olm NMDA to "), float(i)
     net.olm.set_r("somaNMDA",float(i))
-    print "running for " , endt , " ms "
+    print("running for ") , endt , " ms "
     h.run()
     net.calc_lfp()
     vlfp.append(net.vlfp)

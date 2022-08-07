@@ -2,7 +2,7 @@
 
 xwindows=1
 show_panel=0
-pwd()
+//pwd() - mb no longer avail
 load_file("xgetargs.hoc")
 load_file("grvec.hoc")
 load_file("labels.hoc")
@@ -10,7 +10,9 @@ load_file("syncode.hoc")
 
 load_file("decnqs.hoc")
 if (! VECST_INSTALLED) install_vecst()
-if (! INSTALLED_stats) install_stats()
+
+install_stats()
+//if (! INSTALLED_stats) install_stats()
 
 //install_PLACE()
 //install_clust()

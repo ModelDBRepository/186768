@@ -76,6 +76,7 @@ PARAMETER {
   EQU=-1.3470e120
   EQV=-1.3469e120 : value equal to same row value in parallel vector
   EQW=-1.3468e120 : value found in other vector
+  EQX=-1.3468e120 : dunno
   NEQ=-1.3467e120
   SEQ=-1.3466e120
   RXP=-1.3465e120
