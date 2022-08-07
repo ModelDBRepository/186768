@@ -306,7 +306,7 @@ def loadminrundat(simstr):
 		print("loadminrundat ERRB: couldn't read snq from ") + fs
 	net.snq.verbose=0 # next, copy snq into vectors so can plot with net.rasterplot
 	for po in net.cells:
-		for i in xrange(len(po.lidvec)):
+		for i in range(len(po.lidvec)):
 			id = po.cell[i].id
 			po.lidvec[i].resize(0)
 			po.ltimevec[i].resize(0)
@@ -384,18 +384,18 @@ def getampphnq(nqtheta,nqgamma,phbins=100,skipms=200):
   vamp.fill(0)
   vn.fill(0) # init counts to 0
   lv = h.List() # list to keep amplitude samples
-  for i in xrange(int(vph.size())):
+  for i in range(int(vph.size())):
     lv.append(h.Vector())
   sz=int(nqgamma.v[0].size())
   startx=int(skipms/h.dt)
-  for i in xrange(startx,sz,1):
+  for i in range(startx,sz,1):
     bin=int(phbins*(nqtheta.v[colp][i]-phmin)/phrng)
     if bin<0:
       print("bin < 0!")
     if bin>=phbins+1:
       print("bin >= phbins+1")
     lv.o(bin).append(nqgamma.v[cola][i])
-  for i in xrange(0,int(vamp.size()),1):
+  for i in range(0,int(vamp.size()),1):
     sz = lv.o(i).size()
     if sz > 0: # if no samples, skip
       av = lv.o(i).mean()
@@ -423,7 +423,7 @@ def checkbase(endt=3e3,skipms=200,justone=False):
   h.tstop=endt
   j = 0
   dt = h.dt
-  for i in xrange(1,-1,-1):
+  for i in range(1,-1,-1):
     print("set olm NMDA to "), float(i)
     net.olm.set_r("somaNMDA",float(i))
     print("running for ") , endt , " ms "

@@ -199,7 +199,7 @@ class Network:
 			self.NCV[s] = []
 			sidx = self.pyr.ncsidx[s]
 			eidx = self.pyr.nceidx[s]
-			for i in xrange(sidx,eidx+1):
+			for i in range(sidx,eidx+1):
 				self.NCV[s].append(h.Vector())
 				self.ncl[i].record(self.NCV[s][-1])
 
@@ -217,7 +217,7 @@ class Network:
 			sidx = self.pyr.ncsidx[s]
 			eidx = self.pyr.nceidx[s]
 			idx = 0
-			for i in xrange(0,len(self.NCV[s])):
+			for i in range(0,len(self.NCV[s])):
 				nqin.append(idx,jdx,self.NCV[s][i])
 				idx = idx + 1
 			jdx = jdx + 1
@@ -227,7 +227,7 @@ class Network:
 		snq=self.snq
 		snq.verbose = 0
 		self.spkh = h.List()
-		for i in xrange(0,800):
+		for i in range(0,800):
 			if snq.select("id",i) > 0:
 				vt = snq.getcol("t")
 				self.spkh.append(vt.histogram(0,h.tstop,binsz))
@@ -387,7 +387,7 @@ class Network:
 		for po in self.cells:
 			id = h.Vector()
 			tv = h.Vector()
-			for i in xrange(po.n):
+			for i in range(po.n):
 				id.append(po.lidvec[i])
 				tv.append(po.ltimevec[i])
 			id.mark(h.g[0],tv,"O",sz,col[pon],1)
@@ -398,7 +398,7 @@ class Network:
 		self.myidvec = h.Vector() #IDs and firing times for ALL cells
 		self.mytimevec = h.Vector()
 		for po in self.cells:
-			for i in xrange(po.n):
+			for i in range(po.n):
 				self.myidvec.append(po.lidvec[i])
 				self.mytimevec.append(po.ltimevec[i])
 
@@ -412,7 +412,7 @@ class Network:
 		ty = 0
 		vec = h.Vector()
 		for po in self.cells:
-			for i in xrange(po.n):
+			for i in range(po.n):
 				self.snq.v[0].append(po.lidvec[i])
 				self.snq.v[1].append(po.ltimevec[i])
 				vec.resize(po.lidvec[i].size())
@@ -435,7 +435,7 @@ class Network:
 		tf = h.tstop - skipms
 		ty = 0
 		for po in self.cells:
-			for i in xrange(po.n):
+			for i in range(po.n):
 				id = po.cell[i].id
 				n = float( self.snq.select("t",">",skipms,"id",id) )
 				self.fnq.append(id, n*1e3/tf, ty)
