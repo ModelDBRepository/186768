@@ -4,7 +4,7 @@
 #include <math.h>
 #include <limits.h> /* contains LONG_MAX */
 #include <time.h>
-#include <sys/time.h>
+//#include <sys/time.h>
 #include <pthread.h>
 #include <stdint.h>
 

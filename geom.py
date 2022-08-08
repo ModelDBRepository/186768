@@ -136,6 +136,8 @@ class Ow(Cell):
 		self.soma.insert('Iholmw')
 		self.soma.insert('Caolmw')
 		self.soma.insert('ICaolmw')
+		for seg in self.soma: 
+			seg.gca_ICaolmw = 1 # adjust the conductance when gabapentin present
 		self.soma.insert('KCaolmw')
 
 	def set_synapses(self):

@@ -42,12 +42,20 @@ if __name__ == "__main__":
     Run.fiwash = h.FInitializeHandler(1,Run.setwash)
     """
 
-    h.tstop = 5e3
+    h.tstop = 100 #5e3
     h.run()
-    net.rasterplot()
+    
     net.calc_lfp()
-    net.pravgrates()
-    myg = h.Graph()
-    net.vlfp.plot(myg,h.dt)
-    myg.exec_menu("View = plot")
-    myg.exec_menu("New Axis")
+    import savedata as sd
+    import pickle    
+
+    data = sd.data4rasterplot(net)
+    with open('netresults.pickle','wb') as f:
+        pickle.dump([data, net.lfp, h.dt],f,pickle.HIGHEST_PROTOCOL)
+    
+    print("Back in Spyder/windows, run graphstuff.py")
+    #net.pravgrates()
+    # myg = h.Graph()
+    # net.vlfp.plot(myg,h.dt)
+    # myg.exec_menu("View = plot")
+    # myg.exec_menu("New Axis")
