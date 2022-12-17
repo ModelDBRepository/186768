@@ -1,4 +1,4 @@
-# $Id: pyinit.py,v 1.6 2010/11/27 18:20:40 samn Exp $ 
+# $Id: pyinit.py,v 1.6 2010/11/27 18:20:40 samn Exp $
 
 from neuron import *
 
@@ -40,4 +40,3 @@ import datetime
 import shutil
 
 import pickle
-
