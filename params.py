@@ -1,4 +1,4 @@
-# $Id: params.py,v 1.17 2010/12/03 16:21:57 samn Exp $ 
+# $Id: params.py,v 1.17 2010/12/03 16:21:57 samn Exp $
 
 from pyinit import *
 from geom import *
@@ -25,4 +25,3 @@ def gSetNMDA(net):
     net.pyr.set_r("Adend3NMDA",pyrAdend3NMDA)
 
 gSetNMDA(net)
-
